@@ -1,0 +1,66 @@
+/* ===== Simulated WhatsApp reporting chat + reporting states ===== */
+html.bot-lock{overflow:hidden}
+.bot{position:fixed;inset:0;z-index:46}
+.bot-scrim{position:absolute;inset:0;background:rgba(10,10,10,.28);animation:bot-fade .2s ease}
+.bot-panel{position:absolute;top:0;right:0;bottom:0;width:min(420px,100vw);display:flex;flex-direction:column;background:var(--paper);border-left:1px solid var(--rule);box-shadow:-24px 0 48px -32px rgba(0,0,0,.35);animation:bot-in .28s cubic-bezier(.2,.8,.2,1);padding-top:env(safe-area-inset-top,0px)}
+.bot-head{display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--card);border-bottom:1px solid var(--rule)}
+.bot-av{display:grid;place-items:center;flex:none;width:38px;height:38px;border-radius:50%;background:var(--ink);color:var(--card);font-weight:700;font-size:13px;letter-spacing:-.02em}
+.bot-id{min-width:0;flex:1}
+.bot-title{font-weight:600;font-size:15px;line-height:1.25}
+.bot-sub{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px;color:var(--grey);margin-top:2px}
+.bot-wa{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#1E7A45;border:1px solid #C9E3D2;border-radius:4px;padding:1px 5px}
+.bot-x{display:grid;place-items:center;flex:none;width:34px;height:34px;border:1px solid var(--rule);border-radius:8px;background:var(--card);color:var(--ink);cursor:pointer}
+.bot-x:hover{background:var(--soft)}
+.bot-log{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:16px 14px 8px;display:flex;flex-direction:column;gap:8px;background:var(--paper)}
+.bot-log:focus{outline:0}
+.bm{max-width:84%;padding:9px 12px;border-radius:14px;font-size:14.5px;line-height:1.45;overflow-wrap:anywhere;animation:bot-fade .18s ease}
+.bm-bot{align-self:flex-start;background:var(--card);border:1px solid var(--rule);border-top-left-radius:4px}
+.bm-me{align-self:flex-end;background:var(--ink);color:var(--card);border-top-right-radius:4px}
+.bm-upd{border-style:dashed}
+.bm-tag{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--grey);margin-bottom:2px}
+.bm-hint{display:block;font-size:12.5px;color:var(--grey);margin-top:2px}
+.bm-hint b{color:var(--ink);font-family:var(--mono);letter-spacing:.06em}
+.bm-img{display:block;width:180px;max-width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:10px;margin-bottom:6px}
+.bm-file{display:block;font-size:12.5px;opacity:.85}
+.bm-card{min-width:min(260px,100%)}
+.bm-card-h{font-weight:600;margin-bottom:6px}
+.bm-card dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:0;font-size:13.5px}
+.bm-card dt{color:var(--grey)}
+.bm-card dd{margin:0}
+.bm-pre{margin:0;white-space:pre-wrap;font-family:var(--mono);font-size:12px}
+.bot-quick{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;padding:8px 14px 10px;background:var(--paper)}
+.bq{border:1px solid var(--ink);background:var(--card);color:var(--ink);border-radius:999px;padding:7px 13px;font:inherit;font-size:13.5px;cursor:pointer;max-width:100%;text-align:left;transition:background .15s,color .15s}
+.bq:hover{background:var(--ink);color:var(--card)}
+.bot-compose{display:flex;align-items:center;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));background:var(--card);border-top:1px solid var(--rule)}
+.bot-attach,.bot-send{display:grid;place-items:center;flex:none;width:40px;height:40px;border-radius:50%;border:1px solid var(--rule);background:var(--card);color:var(--ink);cursor:pointer}
+.bot-send{background:var(--ink);border-color:var(--ink);color:var(--card)}
+.bot-attach:disabled{opacity:.35;cursor:not-allowed}
+.bot-input{flex:1;min-width:0;height:40px;border:1px solid var(--rule);border-radius:999px;padding:0 16px;font:inherit;font-size:15px;background:var(--paper);color:var(--ink)}
+.bot-input:focus{outline:0;border-color:var(--ink)}
+@keyframes bot-in{from{transform:translateX(100%)}}
+@keyframes bot-fade{from{opacity:0}}
+@media (max-width:640px){
+  .bot-scrim{display:none}
+  .bot-panel{width:100%;left:0;border-left:0;box-shadow:none}
+  .bm{max-width:90%}
+}
+@media (prefers-reduced-motion:reduce){.bot *{animation:none!important}}
+
+/* Report page: how a report travels */
+.rp-how{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1.5px solid var(--ink)}
+.rp-how li{padding:24px 20px 24px 0}
+.rp-how li + li{padding-left:20px;border-left:1px solid var(--rule)}
+.rp-n{display:block;font-family:var(--display);font-weight:800;font-size:34px;line-height:1;letter-spacing:-.03em;margin-bottom:14px}
+.rp-how h3{font-size:19px;font-weight:700;line-height:1.2}
+.rp-how p{margin:6px 0 0;color:var(--grey);font-size:15px}
+@media (max-width:900px){.rp-how{grid-template-columns:1fr 1fr}.rp-how li:nth-child(3){border-left:0;padding-left:0}.rp-how li:nth-child(n+3){border-top:1px solid var(--rule)}}
+@media (max-width:520px){.rp-how{grid-template-columns:1fr}.rp-how li + li{border-left:0;padding-left:0;border-top:1px solid var(--rule)}}
+
+/* reporter-facing stages: five steps (two when kept private) */
+.rstep{grid-template-columns:repeat(5,minmax(0,1fr))}
+.rstep.rstep-2{grid-template-columns:repeat(2,minmax(0,1fr));max-width:320px}
+@media (max-width:560px){.rstep{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:12px}}
+
+/* moderation states (monochrome; red/amber/green stay with official status) */
+.rs-accepted{border-style:dashed}
+.rs-rejected{border-color:var(--rule);color:var(--grey);text-decoration:line-through}

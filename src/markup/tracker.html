@@ -7,12 +7,13 @@
       <p class="lede">Sorted newest first. Tap any entry for its full history and sources.</p>
     </div>
     <div class="filters">
-      <input class="field search" id="q" type="search" placeholder="Search name, area or licence no." aria-label="Search">
+      <div class="sugwrap sugwrap-field" id="qWrap"><input class="field search" id="q" type="search" placeholder="Search name, area or licence no." aria-label="Search name, area or licence number" autocomplete="off"><div class="sug" id="qSug" hidden></div></div>
       <select class="field" id="city" aria-label="City"><option value="">All cities</option></select>
       <select class="field" id="sort" aria-label="Sort"><option value="new">Newest first</option><option value="old">Oldest first</option></select>
     </div>
     <div class="seg" id="seg"></div>
     <div class="count" id="count"></div>
+    <p class="coverage">Coverage: Maharashtra — official actions tracked. Other states — licence status only.</p>
     <div class="rows" id="rows"></div>
     <p class="fine">Compiled from public sources. Not an official FDA record. Status is as of each entry's "last verified" date. Not listed means no reported action, not a guarantee of hygiene.</p>
   </div>

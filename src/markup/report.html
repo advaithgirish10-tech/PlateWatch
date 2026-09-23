@@ -3,23 +3,26 @@
   <div class="wrap">
     <div class="pagehead">
       <div class="eyebrow">Report a problem</div>
-      <h1 class="h-big" style="margin-top:12px">Saw something wrong? Tell the people who can inspect.</h1>
-      <p class="lede">Reports are moderated before anything appears on a restaurant's page, and the restaurant can respond. For an inspection, also file with the regulator. Here's how, in under three minutes.</p>
+      <h1 class="h-big" style="margin-top:12px">Report a food-safety problem in 30 seconds</h1>
+      <p class="lede">Reporting happens on WhatsApp. Our bot fills in the restaurant, licence number and time; you mostly tap. Reports are moderated before anyone else sees them.</p>
+      <div class="row-actions">
+        <button class="pillbtn" type="button" data-bot>Report on WhatsApp</button>
+        <a class="pillbtn out" href="https://wa.me/910000000000?text=REPORT" target="_blank" rel="noopener">Open in WhatsApp</a>
+        <span class="muted">Live number coming soon</span>
+      </div>
+      <p class="demo">Demo — nothing is actually sent.</p>
     </div>
-    <div class="steps">
-      <div><span><h3>Open FSSAI's Food Safety Connect</h3><p>Free on Android and iOS. Or scan the QR code at the outlet's entrance or billing counter.</p></span></div>
-      <div><span><h3>Find the 14-digit licence number</h3><p>It's on the bill, the menu or the display board. Search it here first to see past actions.</p></span></div>
-      <div><span><h3>Stick to facts, add proof</h3><p>Date, time, what you saw, a photo and the bill. Specific reports get acted on.</p></span></div>
-      <div><span><h3>Submit and keep your complaint ID</h3><p>It's routed to the food safety officer for that area. Track it in the app.</p></span></div>
-    </div>
-    <div class="split" style="padding-top:64px">
-      <div><h2 class="h-mid">Filed one? Help us spot hotspots.</h2><p class="muted" style="margin-top:10px;max-width:44ch">We count reports by area only. Nothing is shown against a business.</p></div>
-      <form class="form" id="rform">
-        <label for="r-area">Area</label><input class="input" id="r-area" required placeholder="e.g. Dadar West">
-        <label for="r-type">What happened</label>
-        <select class="input" id="r-type"><option>Hygiene or pests</option><option>Stale or spoiled food</option><option>Suspected adulteration</option><option>Fell ill after eating</option></select>
-        <div style="margin-top:12px"><button class="pillbtn" type="submit">Log my report</button></div>
-      </form>
+
+    <ol class="rp-how" aria-label="What happens to a report">
+      <li><span class="rp-n" aria-hidden="true">01</span><h3>You report</h3><p>Tell the bot which place, what you saw, and send a photo, video or the bill.</p></li>
+      <li><span class="rp-n" aria-hidden="true">02</span><h3>We check it</h3><p>A moderator reviews every report before it goes anywhere.</p></li>
+      <li><span class="rp-n" aria-hidden="true">03</span><h3>The restaurant is told</h3><p>If you agree, the restaurant sees it and can respond. Your number stays private.</p></li>
+      <li><span class="rp-n" aria-hidden="true">04</span><h3>Enough reports go to the regulator</h3><p>When several people report the same place with evidence, we send them to FDA Maharashtra.</p></li>
+    </ol>
+
+    <div class="rf-direct">
+      <p class="muted">Prefer to file directly? <button class="x" type="button" id="rfCopy">Copy a ready complaint for FSSAI Food Safety Connect</button></p>
+      <textarea class="rf-complaint" id="rfComplaint" rows="7" readonly hidden aria-label="Complaint text to copy"></textarea>
     </div>
   </div>
 </section>

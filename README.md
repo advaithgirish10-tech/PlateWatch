@@ -22,7 +22,7 @@ npm run preview  # serve the production build
 | Homepage (hero, stats, ticker, sections) | `src/markup/home.html` |
 | Tracker search and results | `src/markup/tracker.html` |
 | Public restaurant profile | `src/markup/profile.html` |
-| Report a problem | `src/markup/report.html` |
+| Report a problem (WhatsApp entry) | `src/markup/report.html`, chat in `src/markup/bot.html`, logic in `src/app/bot.js` |
 | How it works (interactive demo) | `src/markup/how-it-works.html` |
 | About | `src/markup/about.html` |
 | Phone + OTP login, account | `src/markup/login.html`, `account.html` |
@@ -48,6 +48,56 @@ Notes:
 - `scoreOf(rid)`: weighted requirements met ÷ weighted applicable × 100. Only "yes" answers backed by current, non-rejected evidence count; critical failures are flagged separately.
 - `PROF`, `REPORTS`: restaurant profiles, evidence and community reports.
 - `go(page, arg)`: page switching.
+
+## Flow changes
+
+User-flow fixes on top of the prototype (logic in `platewatch.js`, styles in `src/styles/flow-fixes.css`):
+
+1. **Profile summary line.** Every profile opens with one plain sentence built from the latest official action (FDA Maharashtra), next to its status pill.
+2. **Score paused during an official action.** While a suspension, revocation or improvement notice is open, the public score (profile, homepage previews, QR poster, how-it-works demo) is replaced with "Score paused while an official action is open" and a "Why?" toggle. Owners still see their number, labelled "Paused publicly"; admin live checks add "(paused publicly)".
+3. **Instant search.** Home and tracker search suggest up to 6 matches (combobox/listbox, Up/Down/Enter/Esc). No-results state offers "Report a problem" (pre-filled) and "Tell us this place exists". Tracker shows a coverage note.
+4. **Share on WhatsApp.** A real `wa.me` link (new tab) with the summary sentence and profile URL, plus a "Copy link" fallback.
+5. **Reporting.** Replaced by WhatsApp reporting (see below).
+6. **Shorter login.** Two screens (number + consent, then OTP). Name and WhatsApp alerts are edited on the account page; login returns the user to where they started (following a place, or the account page).
+7. **Navigation.** Every page has a `#hash` (`#home`, `#tracker`, `#profile-3`, `#report`, `#account`, `#about`, `#how-it-works`, `#restaurants`, `#dashboard`, `#admin`, `#login`), so browser back/forward and deep links work. Profile "Back" returns to the page the user came from.
+8. **Next best actions.** The dashboard overview and checkup show "Do these next" (critical first, then weight, then expired evidence), overall progress, and a progress bar per checkup category.
+
+Decisions:
+- **"Get started" button:** removed (the default). Search is the starting point, and "Log in" now also shows on phones.
+- **WhatsApp links** (share, "Open in WhatsApp"): always a real `<a href="https://wa.me/…" target="_blank" rel="noopener">`, never `window.open()`. Inside a hosted artifact viewer the new tab may be blocked, so "Copy link" and the simulated chat are the fallbacks.
+
+## WhatsApp reporting
+
+Reporting is WhatsApp-first. A real bot needs the WhatsApp Business API and a backend, so the site runs the same script in a **simulated chat** (`src/app/bot.js`, `src/markup/bot.html`, `src/styles/bot.css`). "Open in WhatsApp" on the Report page is a real link to a placeholder number (`wa.me/910000000000?text=REPORT`, live number coming soon). Demo only: nothing is sent.
+
+Entry points: the Report page, every profile, search no-results ("Report a problem", which pre-fills the typed name as an unlisted place) and the homepage community section. The chat is a right-side panel on desktop and full-screen on phones; Esc or × closes it.
+
+**Bot steps**
+1. Greeting.
+2. Verify the number (first time only) with a demo code. A number verified in the chat signs you in on the site, and a site login skips this step. Sample number 98765 43210 is "verified in June" so its reports count in full.
+3. Which place (skipped when opened from a profile): share location (3 nearby sample outlets), send a bill photo (matched to a sample outlet), or type a name (fuzzy match, top 3, or Not listed → name + area).
+4. What did you see: Pests · Stale or spoiled food · Hygiene · Fell ill · Other.
+5. Evidence: photo, video or bill, or Skip. "Fell ill" also asks for a doctor's note from the last 72 hours.
+6. One optional line (500 characters max).
+7. Confirm: an auto-filled summary card, then "Yes, send" or "Keep private".
+8. Receipt `PW-xxxx`, with Copy for FSSAI and Done.
+
+Guardrails: one report per number per outlet per 7 days, 5 reports per number per day. Reports without a photo, video or bill are saved but never go to the regulator. "Keep private" reports are used only to spot patterns. Each number keeps its own thread, so status updates arrive as new bot messages.
+
+**Report statuses (reporter-facing, in the chat and Account → My reports)**
+Awaiting moderation → Accepted → Restaurant notified → Sent to FDA Maharashtra (date) → Official action taken, or Couldn't be used: reason.
+
+Moderators (Admin → Community reports) can Accept, Reject with reason, Ask the reporter for more, or Mark as coordinated. Each report shows its evidence count, how long ago the number was verified, and whether it counts toward escalation. The restaurant owner sees a report only after it is accepted and the reporter chose "Yes, send". When the owner responds, the reporter is told in the chat.
+
+**Default escalation rules** (Admin → Escalation rules, all editable). Only accepted reports with a photo, video or bill, shared with consent, from different numbers count. Weight 1.0, or 0.5 for numbers verified under 7 days ago; private or evidence-free reports count 0.
+- **Standard:** weighted count ≥ 4 within 7 days → escalate to FDA Maharashtra.
+- **Fast lane:** ≥ 5 reports within 48 hours → "Urgent" in Admin → Escalations. Escalated only after a moderator clicks "Confirm not coordinated"; "Possible coordinated reports" shows when more than half come from new numbers.
+- **Illness:** a "Fell ill" report with a bill and a doctor's note escalates on its own; otherwise two independent illness reports within 14 days.
+- **Cooldown:** 60 days, unless new qualifying reports arrive after the last escalation.
+
+Admin → Escalations lists each escalation (outlet, licence, report IDs, rule, authority, date) with a preview of the email packet (reporter identities withheld; "Demo — not emailed."). Reporters are told when their report is sent, and again when the tracker shows a new official action on that outlet. A demo button records a sample action so this can be seen.
+
+Seeds: Coastal Tiffin Centre is one accepted report short of the standard rule; Spice Route Kitchen is one report short of the fast lane, with mostly new numbers.
 
 ## Next steps toward production
 1. Replace in-memory data with a backend (restaurants, regulatory_records, requirements, assessment_responses, evidence, verification_requests, community_reports, restaurant_responses, notifications, audit_log).

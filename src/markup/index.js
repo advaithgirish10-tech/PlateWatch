@@ -12,8 +12,9 @@ import p9 from './restaurants.html?raw';
 import p10 from './dashboard.html?raw';
 import p11 from './admin.html?raw';
 import p12 from './footer.html?raw';
+import p13 from './bot.html?raw';
 import logoMark from '../assets/platewatch-logo-mark.webp';
 
-export const markup = [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12]
+export const markup = [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13]
   .join('\n')
   .replace('__LOGO__', logoMark);

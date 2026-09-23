@@ -6,11 +6,14 @@
       <div class="eyebrow">Safer plates. Healthier cities.</div>
       <h1 class="h5-h"><span>Know before</span><span class="o">you eat.</span></h1>
       <p class="h5-lede">Search any restaurant, café or food outlet and see what is publicly known about its food-safety record.</p>
+      <div class="sugwrap" id="homeWrap">
       <form class="h5-search" id="homeSearch" role="search">
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 15.5 21 21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         <input id="homeQ" placeholder="Search restaurant, area or FSSAI number" aria-label="Search restaurant, area or FSSAI number" autocomplete="off">
         <button type="submit" aria-label="Search">→</button>
       </form>
+      <div class="sug" id="homeSug" hidden></div>
+      </div>
       <div class="h5-pop"><span class="lbl">Popular searches</span>
         <div class="pills"><button data-try="Andheri">Andheri</button><button data-try="Kothrud">Kothrud</button><button data-try="Dosa">Dosa</button><button data-try="Café">Cafés</button><button data-try="Sweet shop">Sweet shops</button></div>
       </div>
@@ -101,7 +104,7 @@
       <h2 class="s5-h">We don't decide<br><span class="g">if a restaurant is good or bad.</span></h2>
       <p class="s5-p">We show four kinds of information, each labelled, each dated. You read the evidence and make the call.</p>
       <ul class="src5"><li><span class="tag tag-off">Official information</span></li><li><span class="tag tag-self">Restaurant-submitted evidence</span></li><li><span class="tag tag-plat">Platform verification</span></li><li><span class="tag tag-com">Community reports</span></li></ul>
-      <div class="row-actions"><button class="pillbtn out" data-go="report">How reporting works</button></div>
+      <div class="row-actions"><button class="pillbtn" type="button" data-bot>Report on WhatsApp</button><button class="pillbtn out" data-go="report">How reporting works</button></div>
     </div>
     <div class="panel5" id="cmExample"></div>
   </section>
@@ -110,11 +113,14 @@
   <div class="final">
     <div class="wrap">
       <h2 class="final-h">Know before<br><span>you eat.</span></h2>
+      <div class="sugwrap" id="finalWrap">
       <form class="h5-search dark" id="finalSearch" role="search">
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 15.5 21 21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         <input id="finalQ" placeholder="Search a restaurant" aria-label="Search a restaurant" autocomplete="off">
         <button type="submit" aria-label="Search">→</button>
       </form>
+      <div class="sug" id="finalSug" hidden></div>
+      </div>
     </div>
   </div>
 </section>

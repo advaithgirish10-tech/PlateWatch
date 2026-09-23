@@ -6,6 +6,7 @@
  * QRCode is a global loaded in index.html (qrcodejs 1.0.0).
  */
 /* global QRCode */
+import { createReporting } from "./bot.js";
 export function initApp() {
 const TYPES={sus:["Suspended","st-sus",""],rev:["Revoked","st-rev",""],imp:["Improvement notice","st-imp",""],ok:["Reinstated","st-ok",""]};
 const D=[
@@ -39,13 +40,30 @@ let tt;function toast(m){const t=document.getElementById("toast");t.textContent=
 
 /* routing */
 const pages=["home","tracker","detail","report","verify","login","account","biz","dash","admin","about"];
-function go(p,arg){
+/* each page has a #hash (letters, digits, hyphens) so browser back/forward and deep links work */
+const PAGE_HASH={home:"home",tracker:"tracker",report:"report",verify:"how-it-works",login:"login",account:"account",biz:"restaurants",dash:"dashboard",admin:"admin",about:"about"};
+const PAGE_NAME={home:"Home",tracker:"Tracker",report:"Report",verify:"How it works",login:"Log in",account:"Your alerts",biz:"For restaurants",dash:"Dashboard",admin:"Admin",about:"About"};
+const hashFor=(p,arg)=>p==="detail"?"profile-"+arg:PAGE_HASH[p];
+function parseHash(h){
+  h=(h||"").replace(/^#/,"");
+  const m=h.match(/^profile-(\d+)$/);if(m)return D.some(r=>r.id===+m[1])?{p:"detail",arg:+m[1]}:null;
+  const p=Object.keys(PAGE_HASH).find(k=>PAGE_HASH[k]===h);return p?{p}:null;
+}
+S.page={p:"home"};S.stack=[];
+/* where a profile's Back button should go: the last page visited that isn't login or this same profile */
+function backTarget(id){for(let i=S.stack.length-1;i>=0;i--){const e=S.stack[i];if(e.p==="login"||(e.p==="detail"&&e.arg===id))continue;return e}return {p:"tracker"}}
+const pageName=e=>e.p==="detail"?D.find(r=>r.id===e.arg).name:PAGE_NAME[e.p];
+function go(p,arg,opt){
   if(p==="account"&&!S.user){S.after="account";p="login"}
   if(p==="dash"&&S.owner==null)p="biz";
   if(p==="biz"&&S.owner!=null&&arg==null){p="dash";arg="overview"}
+  const prev=S.page;if(!(prev.p===p&&prev.arg===arg)){S.stack.push(prev);if(S.stack.length>40)S.stack.shift()}
+  S.page={p,arg};
+  const h=hashFor(p,arg);
+  if(location.hash.slice(1)!==h){if(opt&&opt.fromHash)history.replaceState(null,"","#"+h);else location.hash=h}
+  if(p!=="admin")document.documentElement.classList.remove("ad-lock");
   pages.forEach(x=>document.getElementById("p-"+x).hidden=x!==p);
   document.querySelectorAll(".links .l").forEach(b=>b.setAttribute("aria-current",b.dataset.go===p||(p==="dash"&&b.dataset.go==="biz")?"page":"false"));
-  if(p!=="admin")document.documentElement.classList.remove("ad-lock");
   document.getElementById("drawer").hidden=true;document.getElementById("menuBtn").setAttribute("aria-expanded","false");
   if(p==="detail")renderDetail(arg);
   if(p==="login")renderAuth("phone");
@@ -56,9 +74,13 @@ function go(p,arg){
   if(p==="admin")renderAdmin(arg||"verify");
   window.scrollTo(0,0);
 }
+addEventListener("hashchange",()=>{
+  const h=location.hash.slice(1);if(h===hashFor(S.page.p,S.page.arg))return;
+  const t=parseHash(h);if(t)go(t.p,t.arg,{fromHash:true});
+});
 document.addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(b){e.preventDefault();go(b.dataset.go)}});
 document.getElementById("menuBtn").onclick=e=>{const d=document.getElementById("drawer");d.hidden=!d.hidden;e.currentTarget.setAttribute("aria-expanded",String(!d.hidden))};
-document.getElementById("authBtn").onclick=()=>go(S.user?"account":"login");
+document.getElementById("authBtn").onclick=()=>{if(S.user){go("account");return}S.after="account";go("login")};
 function syncAuthBtn(){const b=document.getElementById("authBtn");b.textContent=S.user?"My alerts":"Log in"}
 
 /* rows */
@@ -68,6 +90,75 @@ function rowHTML(r){const c=cur(r);return `<div class="r" tabindex="0" role="lin
   <div class="why">${esc(c[2])}</div>${st(c[1])}<span class="arr" aria-hidden="true">→</span></div>`}
 function bindRows(el){el.addEventListener("click",e=>{const r=e.target.closest(".r");if(r)go("detail",+r.dataset.id)});el.addEventListener("keydown",e=>{if(e.key==="Enter"){const r=e.target.closest(".r");if(r)go("detail",+r.dataset.id)}})}
 
+/* ---------- FLOW FIXES: shared helpers ---------- */
+const AUTH="FDA Maharashtra";
+const PRIOR={sus:"a suspension",rev:"a revocation",imp:"an improvement notice"};
+/* one plain-language sentence from the latest official action, no verdicts */
+function summaryLine(r){
+  const c=r.hist.length?cur(r):null;
+  if(!c)return `No official action on record as of ${fmt(r.verified)}. This is not a guarantee of hygiene.`;
+  if(c[1]==="sus")return `Licence suspended by ${AUTH} on ${fmt(c[0])}. Not reinstated as of ${fmt(r.verified)}.`;
+  if(c[1]==="rev")return `Licence revoked by ${AUTH} on ${fmt(c[0])}.`;
+  if(c[1]==="imp")return `Improvement notice issued on ${fmt(c[0])}. Follow-up pending.`;
+  const pv=r.hist[r.hist.length-2];
+  return pv?`Licence reinstated on ${fmt(c[0])} after ${PRIOR[pv[1]]||"an earlier action"} on ${fmt(pv[0])}.`:`Licence reinstated on ${fmt(c[0])}.`;
+}
+/* the PlateWatch score is never shown publicly while an official action is open */
+const paused=rid=>{const r=D.find(x=>x.id===rid);return !!r&&r.hist.length>0&&["sus","rev","imp"].includes(cur(r)[1])};
+const pausedHTML=()=>`<div class="pz"><p class="pz-t">Score paused while an official action is open.</p><details class="pz-why"><summary>Why?</summary><p>Our score measures submitted evidence. It never overrides an official finding.</p></details></div>`;
+function pubScore(rid,n){return paused(rid)?pausedHTML():`<div class="score">${n}<small>/100</small></div>`}
+const progHTML=(done,tot)=>`<div class="prog"><div class="prog-l"><b>${done} of ${tot}</b> requirements met</div><span class="prog-t" aria-hidden="true"><i style="width:${tot?Math.round(done/tot*100):0}%"></i></span></div>`;
+
+/* instant search: combobox + listbox, shared by home, tracker and the report form */
+function findPlaces(q){q=q.trim().toLowerCase();if(!q)return [];
+  return D.filter(r=>(r.name+" "+r.area+" "+r.city+" "+r.cat+" "+r.lic).toLowerCase().includes(q))
+    .sort((a,b)=>(b.name.toLowerCase().startsWith(q)-a.name.toLowerCase().startsWith(q))||a.name.localeCompare(b.name));}
+function attachSuggest(input,panel,{onPick,noResults}){
+  const wrap=panel.parentNode,lb=panel.id+"-lb";let items=[],act=-1,open=false;
+  input.setAttribute("role","combobox");input.setAttribute("aria-autocomplete","list");input.setAttribute("aria-expanded","false");input.setAttribute("aria-controls",lb);
+  const close=()=>{open=false;panel.hidden=true;items=[];act=-1;input.setAttribute("aria-expanded","false");input.removeAttribute("aria-activedescendant")};
+  const draw=()=>{
+    const q=input.value.trim();if(!q){close();return}
+    items=findPlaces(q).slice(0,6);act=-1;input.removeAttribute("aria-activedescendant");
+    if(!items.length){input.setAttribute("aria-expanded","false");if(!noResults){close();return}panel.innerHTML=noResults(q);panel.hidden=false;open=true;return}
+    panel.innerHTML=`<ul role="listbox" id="${lb}" aria-label="Matching restaurants">${items.map((r,i)=>`<li role="option" id="${lb}-${i}" data-sid="${r.id}" aria-selected="false"><span class="sg-main"><span class="sg-n">${esc(r.name)}</span><span class="sg-a">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</span></span>${st(cur(r)[1])}</li>`).join("")}</ul>`;
+    panel.hidden=false;open=true;input.setAttribute("aria-expanded","true");
+  };
+  const mark=()=>{panel.querySelectorAll("[role=option]").forEach((o,i)=>o.setAttribute("aria-selected",String(i===act)));
+    if(act<0){input.removeAttribute("aria-activedescendant");return}
+    const o=document.getElementById(lb+"-"+act);input.setAttribute("aria-activedescendant",o.id);o.scrollIntoView({block:"nearest"})};
+  const pick=r=>{close();onPick(r)};
+  input.addEventListener("input",draw);
+  input.addEventListener("focus",()=>{if(input.value.trim()&&!open)draw()});
+  input.addEventListener("keydown",e=>{
+    if(e.key==="ArrowDown"){if(!open)draw();if(items.length){e.preventDefault();act=(act+1)%items.length;mark()}}
+    else if(e.key==="ArrowUp"){if(items.length){e.preventDefault();act=act<=0?items.length-1:act-1;mark()}}
+    else if(e.key==="Enter"){if(open&&act>=0){e.preventDefault();pick(items[act])}else close()}
+    else if(e.key==="Escape"){if(open){e.preventDefault();close()}}
+  });
+  panel.addEventListener("mousedown",e=>{if(e.target.closest("[role=option]"))e.preventDefault()});
+  panel.addEventListener("click",e=>{const o=e.target.closest("[data-sid]");if(o)pick(D.find(x=>x.id===+o.dataset.sid))});
+  document.addEventListener("pointerdown",e=>{if(open&&!wrap.contains(e.target))close()});
+  wrap.addEventListener("focusout",e=>{if(open&&e.relatedTarget&&!wrap.contains(e.relatedTarget))close()});
+  return {close};
+}
+/* shown wherever a search finds nothing */
+const noResHTML=q=>`<div class="nores"><p><b>Nothing on record for “${esc(q)}”.</b> This is not a guarantee of hygiene.</p>
+  <div class="nores-acts"><button type="button" class="pillbtn sm" data-nr="report" data-q="${esc(q)}">Report a problem</button><button type="button" class="pillbtn out sm" data-nr="exists" aria-expanded="false">Tell us this place exists</button></div>
+  <form class="nr-form" hidden><div><label>Name<input class="input" name="nm" required value="${esc(q)}"></label></div><div><label>Area<input class="input" name="ar" required placeholder="e.g. Dadar West"></label></div><div><button class="pillbtn sm" type="submit">Send</button></div></form></div>`;
+document.addEventListener("click",e=>{
+  const b=e.target.closest("[data-nr]");if(!b)return;
+  if(b.dataset.nr==="report"){RP.open({name:b.dataset.q});return}
+  const f=b.closest(".nores").querySelector(".nr-form");f.hidden=!f.hidden;b.setAttribute("aria-expanded",String(!f.hidden));if(!f.hidden)f.querySelector("[name=ar]").focus();
+});
+document.addEventListener("submit",e=>{const f=e.target.closest(".nr-form");if(!f)return;e.preventDefault();toast("Thanks, we'll check it");f.hidden=true;f.reset();const b=f.closest(".nores").querySelector('[data-nr="exists"]');if(b)b.setAttribute("aria-expanded","false")});
+/* clipboard with a select-the-text fallback */
+function copyText(text,okMsg,fallback){
+  const fail=()=>{fallback();toast("Press copy to finish")};
+  try{if(!navigator.clipboard||!navigator.clipboard.writeText)return fail();navigator.clipboard.writeText(text).then(()=>toast(okMsg),fail)}catch(_){fail()}
+}
+function selectNode(el){const s=getSelection(),g=document.createRange();g.selectNodeContents(el);s.removeAllRanges();s.addRange(g)}
+
 /* home */
 const cnt=t=>D.filter(r=>cur(r)[1]===t).length;
 const everImp=D.filter(r=>r.hist.some(h=>h[1]==="imp")).length;
@@ -76,6 +167,8 @@ const latest=[...D].sort(byNew);
 const tick=latest.slice(0,10).map(r=>{const c=cur(r);return `<span class="it"><span class="dot d-${c[1]}"></span><b>${esc(r.name)}</b><span>${c[1]==="ok"?"Cleared":TYPES[c[1]][0]}</span><span class="m">${esc(r.area)} · ${fmt(c[0])}</span></span>`}).join("");
 document.getElementById("ticker").innerHTML=tick+tick;
 document.getElementById("homeSearch").onsubmit=e=>{e.preventDefault();S.q=document.getElementById("homeQ").value;document.getElementById("q").value=S.q;go("tracker")};
+attachSuggest(document.getElementById("homeQ"),document.getElementById("homeSug"),{onPick:r=>go("detail",r.id),noResults:noResHTML});
+attachSuggest(document.getElementById("finalQ"),document.getElementById("finalSug"),{onPick:r=>go("detail",r.id),noResults:noResHTML});
 document.querySelectorAll("[data-try]").forEach(b=>b.onclick=()=>{S.q=b.dataset.try;document.getElementById("q").value=S.q;go("tracker")});
 
 /* tracker */
@@ -88,10 +181,13 @@ function renderList(){
   let rows=D.filter(r=>(!q||(r.name+" "+r.area+" "+r.city+" "+r.cat+" "+r.lic).toLowerCase().includes(q))&&(!S.city||r.city===S.city)&&(!S.type||cur(r)[1]===S.type));
   rows.sort(S.sort==="new"?byNew:(a,b)=>-byNew(a,b));
   document.getElementById("count").textContent=`${rows.length} ${rows.length===1?"ENTRY":"ENTRIES"}`;
-  document.getElementById("rows").innerHTML=rows.length?rows.map(rowHTML).join(""):`<div class="empty"><h3 class="h-mid">Nothing found for “${esc(S.q||"this filter")}”.</h3><p>No reported FDA action. That's not a guarantee of hygiene. It just means nothing has been logged.</p></div>`;
+  document.getElementById("rows").innerHTML=rows.length?rows.map(rowHTML).join("")
+    :q&&!findPlaces(q).length?`<div class="empty empty-nr">${noResHTML(S.q.trim())}</div>`
+    :`<div class="empty"><h3 class="h-mid">Nothing found for “${esc(S.q||"this filter")}”.</h3><p>No reported FDA action. That's not a guarantee of hygiene. It just means nothing has been logged.</p></div>`;
 }
 bindRows(document.getElementById("rows"));
 document.getElementById("q").oninput=e=>{S.q=e.target.value;renderList()};
+attachSuggest(document.getElementById("q"),document.getElementById("qSug"),{onPick:r=>go("detail",r.id)});
 document.getElementById("city").onchange=e=>{S.city=e.target.value;renderList()};
 document.getElementById("sort").onchange=e=>{S.sort=e.target.value;renderList()};
 
@@ -136,26 +232,37 @@ function renderDetailV2(id){
   document.getElementById("cform").onsubmit=e=>{e.preventDefault();const m=document.getElementById("cmsg");m.textContent=`Received. Reference PW-${1000+id}. We'll review it within 48 hours.`;m.hidden=false;e.target.reset()};
 }
 
-/* report */
-document.getElementById("rform").onsubmit=e=>{e.preventDefault();toast("Logged for "+document.getElementById("r-area").value+". Thanks for reporting to the regulator.");e.target.reset()};
+/* report: every [data-bot] button opens the simulated WhatsApp chat */
+const $=id=>document.getElementById(id);
+document.addEventListener("click",e=>{const b=e.target.closest("[data-bot]");if(!b)return;e.preventDefault();RP.open(b.dataset.botRid?{rid:+b.dataset.botRid}:{})});
+$("rfCopy").onclick=()=>{
+  const mine=S.user?REPORTS.filter(x=>x.user===S.user.phone).sort((a,b)=>b.ts-a.ts)[0]:null;
+  const t=RP.complaintText(mine||null);
+  const ta=$("rfComplaint");ta.value=t;
+  copyText(t,"Complaint copied",()=>{ta.hidden=false;ta.focus();ta.select()});
+};
 document.getElementById("copyg").onclick=()=>{const t=document.getElementById("gmail").textContent;navigator.clipboard?.writeText(t).then(()=>toast("Copied")).catch(()=>{const s=getSelection(),g=document.createRange();g.selectNodeContents(document.getElementById("gmail"));s.removeAllRanges();s.addRange(g);toast("Selected. Press copy.")})};
 
 /* AUTH (simulated OTP) */
-let phone="",code="",timer=null,left=0,attempts=0;
+let phone="",code="",timer=null,left=0,attempts=0,consent=false;
 function renderAuth(step){
   const P=document.getElementById("authPanel");clearInterval(timer);
   if(step==="phone"){
-    P.innerHTML=`<div class="eyebrow">Step 1 of 3</div><h2 class="h-big" style="margin-top:12px">Your mobile number</h2>
+    const ok=v=>/^[6-9]\d{9}$/.test(v);
+    P.innerHTML=`<div class="eyebrow">Step 1 of 2</div><h2 class="h-big" style="margin-top:12px">Your mobile number</h2>
     <p class="muted" style="margin-top:12px">We'll send a 6-digit code by SMS. Used only for alerts you choose.</p>
     <form id="pf"><div class="phonefield"><span>+91</span><input id="ph" inputmode="numeric" autocomplete="tel-national" maxlength="10" placeholder="98765 43210" aria-label="10-digit mobile number" value="${phone}"></div>
     <div id="perr"></div>
-    <div class="row-actions"><button class="pillbtn" id="sendBtn" type="submit" ${/^[6-9]\d{9}$/.test(phone)?"":"disabled"}>Send code</button><span class="muted">Searching is free without an account.</span></div></form>`;
-    const ph=document.getElementById("ph");ph.focus();
-    ph.oninput=()=>{ph.value=ph.value.replace(/\D/g,"").slice(0,10);document.getElementById("sendBtn").disabled=!/^[6-9]\d{9}$/.test(ph.value);document.getElementById("perr").innerHTML=""};
-    document.getElementById("pf").onsubmit=e=>{e.preventDefault();if(!/^[6-9]\d{9}$/.test(ph.value)){document.getElementById("perr").innerHTML=`<div class="err">Enter a 10-digit Indian mobile number starting with 6, 7, 8 or 9.</div>`;return}phone=ph.value;sendCode();renderAuth("otp")};
+    <label class="check" style="margin-top:22px"><input type="checkbox" id="lconsent" ${consent?"checked":""}><span>PlateWatch stores my number only to send alerts I choose. I can delete it anytime.</span></label>
+    <div class="row-actions"><button class="pillbtn" id="sendBtn" type="submit" ${ok(phone)&&consent?"":"disabled"}>Send code</button><span class="muted">Searching is free without an account.</span></div></form>`;
+    const ph=document.getElementById("ph"),cb=document.getElementById("lconsent");ph.focus();
+    const sync=()=>{document.getElementById("sendBtn").disabled=!(ok(ph.value)&&cb.checked)};
+    ph.oninput=()=>{ph.value=ph.value.replace(/\D/g,"").slice(0,10);sync();document.getElementById("perr").innerHTML=""};
+    cb.onchange=()=>{consent=cb.checked;sync()};
+    document.getElementById("pf").onsubmit=e=>{e.preventDefault();if(!ok(ph.value)){document.getElementById("perr").innerHTML=`<div class="err">Enter a 10-digit Indian mobile number starting with 6, 7, 8 or 9.</div>`;return}if(!cb.checked)return;phone=ph.value;sendCode();renderAuth("otp")};
   }
   if(step==="otp"){
-    P.innerHTML=`<div class="eyebrow">Step 2 of 3</div><h2 class="h-big" style="margin-top:12px">Enter the code</h2>
+    P.innerHTML=`<div class="eyebrow">Step 2 of 2</div><h2 class="h-big" style="margin-top:12px">Enter the code</h2>
     <p class="muted" style="margin-top:12px">Sent to +91 ${phone.slice(0,5)} ${phone.slice(5)} · <button class="x" id="chg">Change number</button></p>
     <div class="demo">Demo: no SMS is sent. Your code is ${code}</div>
     <div class="otp" id="otp">${Array.from({length:6},(_,i)=>`<input inputmode="numeric" maxlength="1" aria-label="Digit ${i+1}" id="o${i}">`).join("")}</div>
@@ -176,29 +283,19 @@ function renderAuth(step){
     left=31;tickR();timer=setInterval(tickR,1000);
     rs.onclick=()=>{sendCode();attempts=0;renderAuth("otp");toast("New code sent")};
   }
-  if(step==="profile"){
-    P.innerHTML=`<div class="eyebrow">Step 3 of 3</div><h2 class="h-big" style="margin-top:12px">Almost done</h2>
-    <form class="form" id="prof" style="margin-top:24px">
-      <label for="nm">Your name <span class="muted">(optional)</span></label><input class="input" id="nm" autocomplete="given-name" placeholder="Advaith">
-      <label for="ar">Area to watch</label><input class="input" id="ar" required placeholder="e.g. Dadar West">
-      <label class="check" style="margin-top:14px"><input type="checkbox" id="wa" checked><span>Send alerts on WhatsApp to +91 ${phone.slice(0,5)} ${phone.slice(5)}</span></label>
-      <label class="check"><input type="checkbox" id="consent" required><span>I agree PlateWatch stores my number and area only to send the alerts I choose. I can delete my data anytime.</span></label>
-      <div class="row-actions"><button class="pillbtn" type="submit">Start my alerts</button></div>
-    </form>`;
-    document.getElementById("prof").onsubmit=e=>{e.preventDefault();
-      S.user={phone,name:document.getElementById("nm").value.trim()};
-      const a=document.getElementById("ar").value.trim();if(a&&!S.areas.includes(a))S.areas.unshift(a);
-      syncAuthBtn();
-      const nx=S.after;S.after=null;
-      if(nx&&nx.follow){S.follows.add(nx.follow);toast("You're in. Following this place now.");go("detail",nx.follow)}
-      else if(nx&&nx.detail){S.reportOpen=nx.detail;toast("You're in. Add your report below.");go("detail",nx.detail)}
-      else{toast("You're in. Alerts are on.");go("account")}
-    };
-  }
+}
+/* no profile step: sign in, pre-fill the watched area from the place being followed, then return to where the user started */
+function finishLogin(){
+  const nx=S.after;S.after=null;
+  S.user={phone,name:"",wa:true};RP.registerNumber(phone);
+  if(nx&&nx.follow){const r=D.find(x=>x.id===nx.follow);if(r&&!S.areas.includes(r.area))S.areas.unshift(r.area)}
+  syncAuthBtn();
+  if(nx&&nx.follow){S.follows.add(nx.follow);toast("You're in. Following this place now.");go("detail",nx.follow)}
+  else{toast("You're in. Alerts are on.");go("account")}
 }
 function sendCode(){code=String(Math.floor(100000+Math.random()*900000))}
 function verify(v){
-  if(v===code){renderAuth("profile");return}
+  if(v===code){finishLogin();return}
   attempts++;
   const e=document.getElementById("oerr");
   e.innerHTML=attempts>=3?`<div class="err">Too many wrong tries. Request a new code.</div>`:`<div class="err">That code doesn't match. ${3-attempts} ${3-attempts===1?"try":"tries"} left.</div>`;
@@ -212,6 +309,11 @@ function renderAccount(){
   document.getElementById("accHello").textContent=S.user.name?`${S.user.name}'s alerts`:"Your alerts";
   const fl=[...S.follows].map(id=>D.find(r=>r.id===id)).filter(Boolean);
   document.getElementById("followList").innerHTML=fl.length?fl.map(r=>`<div class="follow"><div><b>${esc(r.name)}</b><div class="muted">${esc(r.area)} · ${st(cur(r)[1])}</div></div><div style="display:flex;gap:14px"><button class="x" data-open="${r.id}">View</button><button class="x" data-unf="${r.id}">Unfollow</button></div></div>`).join(""):`<p class="muted" style="padding-top:14px">Not following anyone yet. Open any entry and tap "Follow for alerts".</p>`;
+  document.getElementById("accName").value=S.user.name||"";
+  document.getElementById("waToggle").checked=S.user.wa!==false;
+  document.getElementById("waLabel").textContent=`Send alerts on WhatsApp to +91 ${S.user.phone.slice(0,5)} ${S.user.phone.slice(5)}`;
+  const mine=REPORTS.filter(x=>x.user===S.user.phone).sort((a,b)=>b.id-a.id);
+  document.getElementById("myReports").innerHTML=(mine.map(myReportHTML).join("")||`<p class="muted" style="padding-top:14px">No reports yet.</p>`)+`<p style="padding-top:14px"><button class="x" data-bot>${mine.length?"Open my WhatsApp chat":"Report a problem on WhatsApp"}</button></p>`;
   document.getElementById("areaList").innerHTML=S.areas.map((a,i)=>{const n=D.filter(r=>r.area.toLowerCase()===a.toLowerCase()).length;return `<div class="follow"><div><b>${esc(a)}</b><div class="muted">${n} logged ${n===1?"action":"actions"}</div></div><button class="x" data-rma="${i}">Remove</button></div>`}).join("")||`<p class="muted" style="padding-top:14px">No areas yet.</p>`;
 }
 document.getElementById("p-account").addEventListener("click",e=>{
@@ -220,11 +322,18 @@ document.getElementById("p-account").addEventListener("click",e=>{
   if(u){S.follows.delete(+u.dataset.unf);renderAccount();toast("Unfollowed")}
   if(a){S.areas.splice(+a.dataset.rma,1);renderAccount()}
 });
+/* what the reporter sees: Awaiting moderation → Accepted → Restaurant notified → Sent to FDA Maharashtra → Official action taken */
+function myReportHTML(x){
+  return `<div class="myrep"><div class="myrep-top"><b>${esc(RP.outletName(x))}</b><span class="myrep-ref">${esc(x.ref)}</span></div>
+    <div class="muted">${esc(x.cat||"Report")} · ${fmt(x.date)} · Evidence: ${esc(RP.evidenceText(x))}</div>${RP.stagesHTML(x)}</div>`;
+}
+document.getElementById("nameForm").onsubmit=e=>{e.preventDefault();S.user.name=document.getElementById("accName").value.trim();renderAccount();toast("Saved")};
+document.getElementById("waToggle").onchange=e=>{S.user.wa=e.target.checked;toast(e.target.checked?"WhatsApp alerts on":"WhatsApp alerts off")};
 document.getElementById("areaForm").onsubmit=e=>{e.preventDefault();const v=document.getElementById("newArea").value.trim();if(v&&!S.areas.includes(v))S.areas.push(v);e.target.reset();renderAccount();toast("Watching "+v)};
-document.getElementById("signout").onclick=()=>{S.user=null;syncAuthBtn();toast("Signed out");go("home")};
+document.getElementById("signout").onclick=()=>{S.user=null;consent=false;syncAuthBtn();toast("Signed out");go("home")};
 document.getElementById("deldata").onclick=()=>document.getElementById("delconfirm").hidden=false;
 document.getElementById("delno").onclick=()=>document.getElementById("delconfirm").hidden=true;
-document.getElementById("delyes").onclick=()=>{S.user=null;S.follows=new Set();S.areas=[];phone="";document.getElementById("delconfirm").hidden=true;syncAuthBtn();toast("Your data has been deleted");go("home")};
+document.getElementById("delyes").onclick=()=>{S.user=null;consent=false;S.follows=new Set();S.areas=[];phone="";document.getElementById("delconfirm").hidden=true;syncAuthBtn();toast("Your data has been deleted");go("home")};
 
 /* ================= V3: TWO-SIDED ================= */
 const CATS=[
@@ -305,11 +414,15 @@ let REPORTS=[
  {id:4,rid:7,text:"Water logging near the kitchen's back entrance.",date:"2026-09-18",status:"verified",photo:true,flag:false,response:null}
 ];
 let RID=5;
-const RS={pending:"Awaiting moderation",review:"Under review",verified:"Verified · unresolved",resolved:"Resolved",dismissed:"Not substantiated"};
+const RS={pending:"Awaiting moderation",accepted:"Moderated",rejected:"Not used",review:"Under review",verified:"Verified · unresolved",resolved:"Resolved",dismissed:"Not substantiated"};
 const rsPill=s=>`<span class="rs rs-${s}">${RS[s]}</span>`;
 const LV={self:"Self-reported",pending:"Verification requested",platform:"Platform verified"};
 const lvl=l=>`<span class="lvl lvl-${l}">${LV[l]}</span>`;
-S.owner=null;S.openCats=new Set(["kitchen"]);S.reportOpen=null;S.claim=null;
+S.owner=null;S.openCats=new Set(["kitchen"]);S.claim=null;
+function loginAs(ph){if(S.user&&S.user.phone===ph)return;S.user={phone:ph,name:"",wa:true};syncAuthBtn()}
+/* refresh whichever page shows report state after the chat or a moderator changes it */
+function refreshReports(){if(!document.getElementById("p-account").hidden&&S.user)renderAccount();if(!document.getElementById("p-admin").hidden)renderAdmin(S.admTab||"reports");if(!document.getElementById("p-detail").hidden&&S.page.p==="detail")renderDetail(S.page.arg);if(!document.getElementById("p-dash").hidden&&S.owner!=null)renderDash(S.dashTab||"overview")}
+const RP=createReporting({D,REPORTS,S,esc,fmt,st,cur,toast,findPlaces,copyText,selectNode,TODAY,newId:()=>RID++,loginAs,onChange:refreshReports});
 
 function currentEv(rid,reqId){const p=PROF[rid];const c=CAT[REQ[reqId].cat];return (p.ev[reqId]||[]).filter(e=>e.status!=="rejected"&&daysAgo(e.date)<=c.expiry)}
 function scoreOf(rid){
@@ -338,8 +451,9 @@ function evCounts(rid){const p=PROF[rid];const c={photo:0,video:0,document:0};le
 function lastUpdated(rid){const e=evCounts(rid).last;return e?fmt(e):"—"}
 function barsHTML(sc){return `<div class="bars">${CATS.map(c=>{const x=sc.cats[c.k];return x.pct==null?"":`<div class="bar"><span>${c.name}</span><span class="t"><i style="width:${x.pct}%"></i></span><span class="p">${x.pct}%</span></div>`}).join("")}</div>`}
 function freshHTML(rid){return `<div class="fr">${CATS.map(c=>{const f=fresh(rid,c.k);return `<div><span class="fd fd-${f.st}"></span>${c.name}<span class="s">${f.txt}</span></div>`}).join("")}</div>`}
-function journeySVG(rid){
-  const p=PROF[rid];const pts=[...p.journey.map(j=>({m:j.m.split(" ")[0],s:j.score})),{m:"Now",s:scoreOf(rid).overall}];
+function journeySVG(rid,hideNow){
+  const p=PROF[rid];const pts=[...p.journey.map(j=>({m:j.m.split(" ")[0],s:j.score})),...(hideNow?[]:[{m:"Now",s:scoreOf(rid).overall}])];
+  if(!pts.length)return "";
   const W=620,H=220,L=40,R=24,T=26,B=34,iw=W-L-R,ih=H-T-B;
   const x=i=>L+(pts.length===1?iw/2:i*iw/(pts.length-1)),y=s=>T+(1-s/100)*ih;
   const grid=[25,50,75,100].map(v=>`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="#E4E4E4"/><text x="${L-10}" y="${y(v)+4}" text-anchor="end" font-family="Geist Mono, monospace" font-size="11" fill="#6B6B6B">${v}</text>`).join("");
@@ -347,9 +461,9 @@ function journeySVG(rid){
   const dots=pts.map((q,i)=>`<circle cx="${x(i)}" cy="${y(q.s)}" r="${i===pts.length-1?6:4.5}" fill="${i===pts.length-1?"#FFFFFF":"#0A0A0A"}" stroke="#0A0A0A" stroke-width="2"/><text x="${x(i)}" y="${y(q.s)-12}" text-anchor="middle" font-family="Archivo, sans-serif" font-weight="800" font-size="15" fill="#0A0A0A">${q.s}</text><text x="${x(i)}" y="${H-10}" text-anchor="middle" font-family="Geist Mono, monospace" font-size="11" fill="#6B6B6B">${q.m.toUpperCase()}</text>`).join("");
   return `<svg class="jchart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Compliance score over time: ${pts.map(q=>q.m+" "+q.s).join(", ")}">${grid}<path d="${path}" fill="none" stroke="#0A0A0A" stroke-width="2"/>${dots}</svg>`;
 }
-function journeyList(rid){const p=PROF[rid];const sc=scoreOf(rid);
+function journeyList(rid,hideNow){const p=PROF[rid];const sc=scoreOf(rid);
   return `<div class="jlist">${p.journey.map(j=>`<div><span class="eyebrow">${j.m}</span><b>${j.score}</b><div><span style="font-size:13px;font-weight:500">${j.kind}</span><ul>${j.notes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul></div></div>`).join("")}
-  <div><span class="eyebrow">Now</span><b>${sc.overall}</b><div><span style="font-size:13px;font-weight:500">${sc.missing.length?sc.missing.length+" requirement"+(sc.missing.length>1?"s":"")+" open":"All requirements met"}</span></div></div></div>`}
+  ${hideNow?`<div><span class="eyebrow">Now</span><b>—</b><div><span style="font-size:13px;font-weight:500">Score paused while an official action is open</span></div></div></div>`:`<div><span class="eyebrow">Now</span><b>${sc.overall}</b><div><span style="font-size:13px;font-weight:500">${sc.missing.length?sc.missing.length+" requirement"+(sc.missing.length>1?"s":"")+" open":"All requirements met"}</span></div></div></div>`}`}
 
 /* ---------- PUBLIC PROFILE ---------- */
 function renderDetail(id){
@@ -359,31 +473,38 @@ function renderDetail(id){
   const lic=c[1]==="sus"?"Suspended":c[1]==="rev"?"Revoked":"Active (as of last check)";
   const enf=c[1]==="sus"||c[1]==="rev"||c[1]==="imp"?TYPES[c[1]][0]+" since "+fmt(c[0]):"No current action listed";
   const reps=REPORTS.filter(x=>x.rid===id);
-  const shown=reps.filter(x=>x.status!=="pending"&&x.status!=="dismissed");
-  const waiting=reps.filter(x=>x.status==="pending").length;
+  const shown=reps.filter(RP.visibleToRestaurant);
+  const waiting=reps.filter(x=>x.status==="pending"&&x.share!==false).length;
   const openIssues=reps.filter(x=>x.status==="verified").length;
   let comp="";
-  if(p){const sc=scoreOf(id),ec=evCounts(id);
+  if(p){const sc=scoreOf(id),ec=evCounts(id),pz=paused(id);
     comp=`<div class="lane">
       <span class="tag ${p.level==="platform"?"tag-plat":"tag-self"}">${p.level==="platform"?"Platform verified · reviewed "+fmt(p.verifiedOn):"Restaurant-submitted · not yet verified"}</span>
       <h2 class="h-mid">Food Safety Compliance</h2>
-      <div class="scorewrap"><div class="score">${sc.overall}<small>/100</small></div>
-        <dl class="scoremeta"><dt>Rating</dt><dd>${grade(sc.overall)}</dd><dt>Requirements met</dt><dd>${sc.done} / ${sc.tot}</dd><dt>Last updated</dt><dd>${lastUpdated(id)}</dd><dt>Level</dt><dd>${LV[p.level]}</dd></dl></div>
+      <div class="scorewrap">${pubScore(id,sc.overall)}
+        <dl class="scoremeta">${pz?"":`<dt>Rating</dt><dd>${grade(sc.overall)}</dd>`}<dt>Requirements met</dt><dd>${sc.done} / ${sc.tot}</dd><dt>Last updated</dt><dd>${lastUpdated(id)}</dd><dt>Level</dt><dd>${LV[p.level]}</dd></dl></div>
       ${sc.crit.length?`<div class="crit"><b class="m">!</b><div><b>Critical requirement${sc.crit.length>1?"s":""} need${sc.crit.length>1?"":"s"} attention</b><br>${sc.crit.map(q=>esc(q.text)).join("; ")}</div></div>`:""}
       ${barsHTML(sc)}
       <h3 style="font-size:17px;margin-top:30px">Evidence freshness</h3>${freshHTML(id)}
       <div class="evc"><span><b>${ec.total}</b> pieces of evidence</span><span><b>${ec.photo}</b> photos</span><span><b>${ec.video}</b> videos</span><span><b>${ec.document}</b> documents</span><span>Last upload ${ec.last?ago(ec.last):"—"}</span></div>
       <p class="disc">PlateWatch's own score, calculated from the restaurant's evidence against ${REQS.length} food-safety requirements. It is not an FSSAI hygiene rating or a government certificate.</p>
     </div>
-    <div class="lane"><span class="tag tag-self">Restaurant-submitted · scored by PlateWatch</span><h2 class="h-mid">Compliance journey</h2>${journeySVG(id)}${journeyList(id)}</div>`;
+    <div class="lane"><span class="tag tag-self">Restaurant-submitted · scored by PlateWatch</span><h2 class="h-mid">Compliance journey</h2>${journeySVG(id,pz)}${journeyList(id,pz)}</div>`;
   } else {
     comp=`<div class="lane"><span class="tag tag-self">Restaurant-submitted</span><div class="claimbox"><div><h2 class="h-mid">No compliance profile yet</h2><p class="muted" style="margin:6px 0 0">This restaurant hasn't claimed its page or submitted evidence.</p></div><button class="pillbtn out" id="claimThis">Own this place? Claim it</button></div></div>`;
   }
+  const bt=backTarget(id),sum=summaryLine(r);
+  const url=location.origin+location.pathname+"#profile-"+id;
+  const wa="https://wa.me/?text="+encodeURIComponent(sum+" Check before you go: "+url);
   document.getElementById("detail").innerHTML=`
-  <button class="back" id="back">← Back to tracker</button>
+  <button class="back" id="back">← Back to ${esc(pageName(bt))}</button>
+  <div class="sumline">${st(c[1])}<p class="sumline-t">${esc(sum)}</p></div>
   <div class="dhead">
-    <div>${st(c[1])} ${p?" "+lvl(p.level):""}<h1 class="h-big" style="margin-top:16px">${esc(r.name)}</h1><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</div></div>
-    <button class="pillbtn ${f?"out":""}" id="followBtn">${f?"✓ Following":"Follow for alerts"}</button>
+    <div>${p?lvl(p.level):""}<h1 class="h-big"${p?' style="margin-top:16px"':""}>${esc(r.name)}</h1><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</div></div>
+    <div class="sharebar">
+      <div class="sharebar-btns"><button class="pillbtn ${f?"out":""}" id="followBtn">${f?"✓ Following":"Follow for alerts"}</button><a class="pillbtn out" id="shareWa" href="${esc(wa)}" target="_blank" rel="noopener">Share on WhatsApp</a><button class="pillbtn out" id="copyLink" type="button">Copy link</button></div>
+      <span class="shareurl" id="profUrl">${esc(url)}</span>
+    </div>
   </div>
   <div class="legend"><span class="tag tag-off">Official record</span><span class="tag tag-self">Restaurant-submitted</span><span class="tag tag-plat">Platform verified</span><span class="tag tag-com">Community report</span></div>
   <div class="dgrid" style="padding-top:0">
@@ -407,15 +528,7 @@ function renderDetail(id){
         <div class="evc" style="margin-bottom:10px"><span><b>${shown.length}</b> published</span><span><b>${openIssues}</b> verified unresolved safety issue${openIssues===1?"":"s"}</span>${waiting?`<span><b>${waiting}</b> awaiting moderation (not shown)</span>`:""}</div>
         ${shown.map(x=>`<div class="rep"><div class="top">${rsPill(x.status)}<span>${fmt(x.date)}</span>${x.photo?"<span>Photo attached</span>":""}</div><p>${esc(x.text)}</p>
           ${x.response?`<div class="resp"><span class="tag tag-self">Restaurant response · ${fmt(x.response.date)}</span><div>${esc(x.response.text)}</div>${x.response.ev?`<div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${esc(x.response.ev)}</div>`:""}</div>`:""}</div>`).join("")||`<p class="muted">No published reports.</p>`}
-        <div style="margin-top:20px"><button class="pillbtn out" id="repBtn">Report a food-safety problem here</button></div>
-        <form class="form" id="repForm" hidden style="margin-top:22px;max-width:520px">
-          <label for="rp-text">What did you see?</label><textarea class="input" id="rp-text" rows="3" required placeholder="Stick to facts: what, where, when."></textarea>
-          <label for="rp-date">Date of visit</label><input class="input" id="rp-date" type="date" max="2026-09-23" required>
-          <label class="upl" style="width:fit-content">Add photo, video or bill<input type="file" id="rp-file" accept="image/*,video/*,.pdf"></label>
-          <span class="muted" id="rp-fname"></span>
-          <p class="muted" style="margin:4px 0 0">Reviewed by our team before it's published. The restaurant is notified and can respond.</p>
-          <div><button class="pillbtn" type="submit">Submit for moderation</button></div>
-        </form>
+        <div style="margin-top:20px"><button class="pillbtn out" type="button" data-bot data-bot-rid="${id}">Report a food-safety problem here</button></div>
       </div>
     </div>
     <div class="side" style="padding-top:34px">
@@ -429,19 +542,14 @@ function renderDetail(id){
         </form></div>
     </div>
   </div>`;
-  document.getElementById("back").onclick=()=>go("tracker");
+  document.getElementById("back").onclick=()=>go(bt.p,bt.arg);
+  document.getElementById("copyLink").onclick=()=>copyText(url,"Link copied",()=>selectNode(document.getElementById("profUrl")));
   document.getElementById("followBtn").onclick=()=>{
     if(!S.user){S.after={follow:id};toast("Log in with your number to get alerts");go("login");return}
     S.follows.has(id)?S.follows.delete(id):S.follows.add(id);
     toast(S.follows.has(id)?"Following. We'll WhatsApp you on any change.":"Unfollowed");renderDetail(id);
   };
   const ct=document.getElementById("claimThis");if(ct)ct.onclick=()=>{go("biz",id)};
-  const rf=document.getElementById("repForm");
-  const openRep=()=>{rf.hidden=false;document.getElementById("rp-text").focus()};
-  document.getElementById("repBtn").onclick=()=>{if(!S.user){S.after={detail:id};toast("Log in so we can follow up on your report");go("login");return}openRep()};
-  if(S.reportOpen===id&&S.user){S.reportOpen=null;openRep();rf.scrollIntoView({block:"center"})}
-  document.getElementById("rp-file").onchange=e=>{document.getElementById("rp-fname").textContent=e.target.files[0]?"Attached: "+e.target.files[0].name:""};
-  rf.onsubmit=e=>{e.preventDefault();REPORTS.push({id:RID++,rid:id,text:document.getElementById("rp-text").value.trim(),date:document.getElementById("rp-date").value,status:"pending",photo:!!document.getElementById("rp-file").files[0],flag:false,response:null});toast("Sent for moderation. Nothing is published until it's reviewed.");renderDetail(id)};
   document.getElementById("cform").onsubmit=e=>{e.preventDefault();const m=document.getElementById("cmsg");m.textContent=`Received. Reference PW-${1000+id}. We'll review it within 48 hours.`;m.hidden=false;e.target.reset()};
 }
 
@@ -491,23 +599,33 @@ function startClaim(rid){
 
 /* ---------- DASHBOARD ---------- */
 function notifs(rid){const p=PROF[rid],out=[];
-  REPORTS.filter(x=>x.rid===rid&&!x.response&&x.status!=="dismissed"&&x.status!=="resolved").forEach(x=>out.push(`New food-safety report received (${fmt(x.date)}). <button class="x" data-tab="reports">Respond</button>`));
+  REPORTS.filter(x=>x.rid===rid&&RP.visibleToRestaurant(x)&&!x.response&&x.status!=="resolved").forEach(x=>out.push(`New food-safety report received (${fmt(x.date)}). <button class="x" data-tab="reports">Respond</button>`));
   Object.values(p.ev).flat().filter(e=>e.status==="more").forEach(e=>out.push(`Reviewer asked for more evidence: ${esc(e.name)}. <button class="x" data-tab="checkup">Open checkup</button>`));
   Object.values(p.ev).flat().filter(e=>e.status==="rejected").forEach(e=>out.push(`Evidence rejected: ${esc(e.name)}. Upload a clearer file.`));
   if(p.adminNote)out.push(esc(p.adminNote));
   return out;
 }
+/* the 3 highest-impact open items: critical first, then highest weight, then expired evidence */
+function nextBest(sc){
+  return [...sc.missing].sort((a,b)=>(b.r.crit-a.r.crit)||(b.r.w-a.r.w)||((b.why==="Evidence expired")-(a.why==="Evidence expired"))).slice(0,3);
+}
+function nextBestHTML(sc){
+  const top=nextBest(sc);if(!top.length)return "";
+  return `<div class="nba"><div class="nba-h"><h3>Do these next</h3><span class="muted">Highest impact on your score</span></div>
+    <ol>${top.map(m=>`<li><div class="nba-t"><span>${esc(m.r.text)}</span><span class="nba-m">${m.r.crit?"<b>Critical</b> · ":""}Weight ${m.r.w} · ${CAT[m.r.cat].name} · ${m.why}</span></div><button class="pillbtn out sm" data-jump="${m.r.id}">Fix this</button></li>`).join("")}</ol></div>`;
+}
 function renderDash(tab){
   const rid=S.owner,r=D.find(x=>x.id===rid),p=PROF[rid],sc=scoreOf(rid),ec=evCounts(rid);
-  const nrep=REPORTS.filter(x=>x.rid===rid&&!x.response&&x.status!=="dismissed"&&x.status!=="resolved").length;
+  const nrep=REPORTS.filter(x=>x.rid===rid&&RP.visibleToRestaurant(x)&&!x.response&&x.status!=="resolved").length;
   const tabs=[["overview","Overview"],["checkup","Food Safety Checkup"],["reports","Reports"+(nrep?`<span class="n">${nrep}</span>`:"")],["journey","Journey"],["qr","QR code"]];
   let body="";
   if(tab==="overview"){
     const ns=notifs(rid);
     const canReq=p.level==="self"&&sc.unanswered===0;
-    body=`<div class="ov"><div>
+    body=`<div style="padding-top:30px">${nextBestHTML(sc)}</div><div class="ov" style="padding-top:26px"><div>
       <span class="tag tag-self">Your Food Safety Compliance</span>
-      <div class="scorewrap"><div class="score">${sc.overall}<small>/100</small></div><dl class="scoremeta"><dt>Rating</dt><dd>${grade(sc.overall)}</dd><dt>Last updated</dt><dd>${lastUpdated(rid)}</dd><dt>Verification</dt><dd>${LV[p.level]}</dd></dl></div>
+      <div class="scorewrap"><div><div class="score">${sc.overall}<small>/100</small></div>${paused(rid)?`<p class="pz-own">Paused publicly until the official action is closed.</p>`:""}</div><dl class="scoremeta"><dt>Rating</dt><dd>${grade(sc.overall)}</dd><dt>Last updated</dt><dd>${lastUpdated(rid)}</dd><dt>Verification</dt><dd>${LV[p.level]}</dd></dl></div>
+      ${progHTML(sc.done,sc.tot)}
       ${sc.crit.length?`<div class="crit"><b class="m">!</b><div><b>Critical requirement${sc.crit.length>1?"s":""} need attention</b><br>${sc.crit.map(q=>esc(q.text)).join("; ")}<br><button data-tab="checkup">Fix in checkup</button></div></div>`:""}
       <div class="kpis"><div><b>${sc.done}/${sc.tot}</b><span>Requirements met</span></div><div><b>${ec.total}</b><span>Evidence submitted</span></div><div><b>${sc.missing.length}</b><span>Need attention</span></div></div>
       ${barsHTML(sc)}
@@ -527,8 +645,9 @@ function renderDash(tab){
     </div></div>`;
   }
   if(tab==="checkup"){
-    body=`<div class="stick"><span>Score now <b>${sc.overall}/100</b> · ${sc.done}/${sc.tot} met${sc.unanswered?` · ${sc.unanswered} unanswered`:""}</span><span class="muted" style="font-size:13px">Based on public FSSAI hygiene parameters. Not an official FSSAI audit.</span></div>
-    ${CATS.map(c=>{const reqs=REQS.filter(q=>q.cat===c.k);const x=sc.cats[c.k];return `<details class="cat" data-cat="${c.k}" ${S.openCats.has(c.k)?"open":""}><summary><h3>${c.name}</h3><span class="p">${x.pct==null?"N/A":x.pct+"%"} · evidence valid ${c.expiry} days</span><span class="ch" aria-hidden="true">+</span></summary>
+    body=`<div class="stick"><span>Score now <b>${sc.overall}/100</b>${paused(rid)?" (paused publicly)":""} · ${sc.done}/${sc.tot} met${sc.unanswered?` · ${sc.unanswered} unanswered`:""}</span><span class="muted" style="font-size:13px">Based on public FSSAI hygiene parameters. Not an official FSSAI audit.</span></div>
+    <div style="padding-top:24px">${nextBestHTML(sc)}${progHTML(sc.done,sc.tot)}</div>
+    ${CATS.map(c=>{const reqs=REQS.filter(q=>q.cat===c.k);const x=sc.cats[c.k];return `<details class="cat" data-cat="${c.k}" ${S.openCats.has(c.k)?"open":""}><summary><h3>${c.name}</h3><span class="catprog"><span class="prog-t" aria-hidden="true"><i style="width:${x.tot?Math.round(x.done/x.tot*100):0}%"></i></span><span>${x.done} of ${x.tot}</span></span><span class="p">${x.pct==null?"N/A":x.pct+"%"} · evidence valid ${c.expiry} days</span><span class="ch" aria-hidden="true">+</span></summary>
       ${reqs.map(q=>{const a=p.resp[q.id];const evs=p.ev[q.id]||[];return `<div class="req" id="req-${q.id}">
         <div><div class="q">${esc(q.text)}</div><div class="qm">${q.crit?'<span class="c">■ Critical</span>':""}<span>Weight ${q.w}</span>${a==="yes"&&!currentEv(rid,q.id).length?"<span class='c'>Evidence needed</span>":""}</div></div>
         <div class="ans" role="group" aria-label="Answer">${["yes","no","na"].map(v=>`<button data-ans="${v}" data-q="${q.id}" aria-pressed="${a===v}">${v==="na"?"N/A":v[0].toUpperCase()+v.slice(1)}</button>`).join("")}</div>
@@ -540,7 +659,7 @@ function renderDash(tab){
     <div style="padding-block:34px 70px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">${p.level==="self"?`<button class="pillbtn" id="reqVer2" ${sc.unanswered?"disabled":""}>Request verification</button>`:lvl(p.level)}<span class="muted">${sc.unanswered?sc.unanswered+" requirement(s) still unanswered":"All requirements answered"}</span></div>`;
   }
   if(tab==="reports"){
-    const reps=REPORTS.filter(x=>x.rid===rid);
+    const reps=REPORTS.filter(x=>x.rid===rid&&RP.visibleToRestaurant(x));
     body=`<div style="padding-block:30px 70px;max-width:760px"><p class="muted" style="margin-top:0">Reports stay private until our team moderates them. Your response is shown next to the report once it's published.</p>
     ${reps.map(x=>`<div class="rep"><div class="top">${rsPill(x.status)}<span>${fmt(x.date)}</span>${x.photo?"<span>Photo attached</span>":""}${x.flag?"<span>You flagged this as incorrect</span>":""}</div><p>${esc(x.text)}</p>
       ${x.response?`<div class="resp"><span class="tag tag-self">Your response · ${fmt(x.response.date)}</span><div>${esc(x.response.text)}</div>${x.response.ev?`<div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${esc(x.response.ev)}</div>`:""}</div>`:
@@ -557,7 +676,7 @@ function renderDash(tab){
     body=`<div class="split" style="padding-top:36px"><div><h2 class="h-mid">Put your profile on the table</h2><p class="muted" style="max-width:44ch">Diners scan and see your score, verification level, official status, evidence freshness, reports and your responses.</p>
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:18px"><span style="font-family:var(--mono);font-size:14px;word-break:break-all" id="qrurl">${url}</span><button class="pillbtn out sm" id="copyqr">Copy link</button></div>
       <p class="muted" style="font-size:13px;margin-top:14px">In the live product this downloads as a print-ready A5 PDF. The link here is a placeholder domain.</p></div>
-      <div class="poster"><span class="eyebrow" style="color:#9A9A9A">PlateWatch</span><div class="ptitle">SCAN TO VIEW OUR FOOD SAFETY PROFILE</div><div class="qrbox" id="qr"></div><div style="font-size:14px">${esc(r.name)}</div><div style="font-family:var(--mono);font-size:11px;color:#9A9A9A">${LV[p.level].toUpperCase()} · ${sc.overall}/100</div></div></div>`;
+      <div class="poster"><span class="eyebrow" style="color:#9A9A9A">PlateWatch</span><div class="ptitle">SCAN TO VIEW OUR FOOD SAFETY PROFILE</div><div class="qrbox" id="qr"></div><div style="font-size:14px">${esc(r.name)}</div><div style="font-family:var(--mono);font-size:11px;color:#9A9A9A">${LV[p.level].toUpperCase()} · ${paused(rid)?"SCORE PAUSED":sc.overall+"/100"}</div></div></div>`;
   }
   document.getElementById("dash").innerHTML=`
     <div class="dashtop"><div><div class="eyebrow">Restaurant dashboard · owner +91 ${esc(p.owner)}</div><h1 class="h-big" style="margin-top:10px">${esc(r.name)}</h1><div class="muted" style="margin-top:6px">${esc(r.area)}, ${esc(r.city)} · ${lvl(p.level)}</div></div>
@@ -598,11 +717,12 @@ document.getElementById("dash").addEventListener("submit",e=>{
   const f=e.target.closest("[data-resp]");if(!f)return;e.preventDefault();
   const id=+f.dataset.resp,x=REPORTS.find(r=>r.id===id);const file=document.getElementById("rspf-"+id).files[0];
   x.response={text:document.getElementById("rsp-"+id).value.trim(),date:TODAY.toISOString().slice(0,10),ev:file?file.name:null};
+  RP.ownerResponded(x);
   toast("Response posted. It appears with the report once published.");renderDash("reports");
 });
 
 /* ---------- ADMIN ---------- */
-S.adm={q:"",filter:"all",sort:"new",view:"list",sel:null,box:null,anim:false};
+S.adm={q:"",filter:"all",sort:"new",view:"list",sel:null,box:null,anim:false,rejecting:null};
 const svg=(d,extra)=>`<svg class="ad-ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra||""}>${d}</svg>`;
 const ICO={
  ok:svg('<circle cx="8" cy="8" r="6.25"/><path d="m5.4 8.2 1.8 1.8 3.4-3.6"/>'),
@@ -744,16 +864,63 @@ function adOverlays(){
   document.documentElement.classList.toggle("ad-lock",!!el.innerHTML);
   S.adm.anim=false;
 }
+/* community reports: moderation queue */
+const REJECT_REASONS=["No food-safety issue described","Evidence doesn't match the outlet","Duplicate of another report","Personal or abusive content","Not enough detail to act on"];
+function adReportRow(x){
+  const r=x.rid?place(x.rid):null,rej=S.adm.rejecting===x.id,pend=x.status==="pending";
+  return `<article class="ad-row ad-row-plain">
+    <div class="ad-row-body">
+      <div class="ad-row-top">
+        <div class="ad-row-id"><h3 class="ad-fn">${esc(RP.outletName(x))}${r?"":` <span class="ad-td-muted">(not listed)</span>`}</h3><div class="ad-meta"><span>${r?esc(r.area)+", "+esc(r.city):esc(x.place.area)}</span>${x.cat?`<span>${esc(x.cat)}</span>`:""}<span>${esc(x.ref)}</span><span>Received ${ago(x.date)}</span>${x.channel==="whatsapp"?"<span>via WhatsApp</span>":""}</div></div>
+        <div class="ad-badges">${pend?`<span class="ad-badge ad-b-pend">${x.askMore?"More requested":"Pending"}</span>`:rsPill(x.status)}${x.share===false?`<span class="ad-badge">Kept private</span>`:""}${x.flag?`<span class="ad-badge ad-b-flag">${ICO.flag}Restaurant flagged as incorrect</span>`:""}</div>
+      </div>
+      <blockquote class="ad-quote">${esc(x.text)}</blockquote>
+      ${x.response?`<div class="ad-note"><span class="ad-lbl">Restaurant response</span>${esc(x.response.text)}</div>`:""}
+      <dl class="ad-facts"><div><dt>Evidence</dt><dd>${esc(RP.evidenceText(x))}</dd></div><div><dt>Reporter</dt><dd>${x.user?cap(RP.ageText(x.user)):"No verified number"}</dd></div><div><dt>Counts toward escalation</dt><dd>${esc(RP.countsInfo(x))}</dd></div></dl>
+      ${rej?`<div class="ad-reason"><label class="ad-select"><span>Reason</span><select id="admReason">${REJECT_REASONS.map(o=>`<option>${o}</option>`).join("")}</select></label><button class="ad-btn ad-btn-out" data-m="cancel" data-rep="${x.id}">Cancel</button><button class="ad-btn ad-btn-danger ad-btn-danger-solid" data-m="reject-go" data-rep="${x.id}">Reject report</button></div>`:""}
+      <div class="ad-acts">${pend?`<button class="ad-link" data-m="coord" data-rep="${x.id}">Mark as coordinated</button><span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-m="more" data-rep="${x.id}" ${!x.user||x.askMore?"disabled":""}>Ask reporter for more</button><button class="ad-btn ad-btn-danger" data-m="reject" data-rep="${x.id}">Reject with reason</button><button class="ad-btn ad-btn-pri" data-m="accept" data-rep="${x.id}">Accept</button></span>`
+        :`<span></span><span class="ad-acts-main"><button class="ad-btn ad-btn-danger" data-m="reject" data-rep="${x.id}">Reject with reason</button><button class="ad-btn ad-btn-pri" data-m="keep" data-rep="${x.id}">Keep published</button></span>`}</div>
+    </div></article>`;
+}
+/* escalations: fast-lane outlets waiting for a moderator, escalations sent, and outlets being watched */
+function adWatchHTML(urg){
+  const rows=D.map(r=>{const s=RP.standard(r.id),f=RP.fastLane(r.id),l=RP.lastEscalation(r.id);return {r,s,f,l,u:urg.some(o=>o.r.id===r.id)}}).filter(o=>o.s.count||o.f.count||o.l);
+  if(!rows.length)return adEmpty("Nothing to watch","No outlet has qualifying reports right now.");
+  return `<div class="ad-surface ad-tbl"><table><thead><tr><th>Outlet</th><th>Standard (${RP.ESC.stdDays} days)</th><th>Fast lane (${RP.ESC.fastHours} h)</th><th>Status</th></tr></thead><tbody>${rows.map(o=>`<tr><td>${esc(o.r.name)}</td><td>${o.s.count} / ${RP.ESC.stdCount}</td><td>${o.f.count} / ${RP.ESC.fastCount}</td><td>${o.u?`<span class="ad-badge ad-b-more">Urgent</span>`:o.l?`<span class="ad-badge ad-b-ok">Escalated ${fmt(o.l.date)}</span>`:`<span class="ad-badge ad-b-pend">Watching</span>`}</td></tr>`).join("")}</tbody></table></div>`;
+}
+function adEscalationsHTML(urg){
+  const urgent=urg.map(({r,f})=>`<article class="ad-row ad-row-plain">
+    <div class="ad-row-body">
+      <div class="ad-row-top"><div class="ad-row-id"><h3 class="ad-fn">${esc(r.name)}</h3><div class="ad-meta"><span>FSSAI ${r.lic}</span><span>${f.count} reports in ${RP.ESC.fastHours} hours</span><span>${f.fresh} from numbers under ${RP.ESC.newDays} days old</span></div></div>
+        <div class="ad-badges"><span class="ad-badge ad-b-more">Urgent</span></div></div>
+      <p class="ad-refs">${f.list.map(x=>`${esc(x.ref)} · ${esc(x.cat)} · ${RP.isAccepted(x)?"accepted":"pending"}`).join("<br>")}</p>
+      <div class="ad-acts"><button class="ad-link" data-fast="coord" data-rid="${r.id}">Mark as coordinated</button><span class="ad-acts-main">${f.warn?`<span class="ad-badge ad-b-flag ad-warn">${ICO.warn}Possible coordinated reports</span>`:""}<button class="ad-btn ad-btn-pri" data-fast="confirm" data-rid="${r.id}">Confirm not coordinated</button></span></div>
+    </div></article>`).join("");
+  const sent=[...RP.ESCALATIONS].reverse().map(e=>{const r=place(e.rid);return `<article class="ad-row ad-row-plain">
+    <div class="ad-row-body">
+      <div class="ad-row-top"><div class="ad-row-id"><h3 class="ad-fn">${esc(r.name)}</h3><div class="ad-meta"><span>FSSAI ${r.lic}</span><span>To ${esc(e.authority)}</span><span>${fmt(e.date)}</span><span>${esc(e.ref)}</span></div></div>
+        <div class="ad-badges"><span class="ad-badge">${esc(e.rule)}</span><span class="ad-badge ad-b-ok">Sent</span></div></div>
+      <dl class="ad-facts"><div><dt>Reports</dt><dd>${e.reportIds.length}: ${e.reportIds.map(id=>esc(REPORTS.find(x=>x.id===id).ref)).join(", ")}</dd></div><div><dt>Rule</dt><dd>${esc(e.rule)}</dd></div><div><dt>Authority</dt><dd>${esc(e.authority)}</dd></div></dl>
+      <details class="ad-packet"><summary>Preview email packet <span class="ad-lbl-sub">Demo — not emailed.</span></summary><pre>${esc(RP.packetText(e))}</pre></details>
+      <div class="ad-acts"><span class="ad-td-muted">${e.actionOn?`Official action recorded ${fmt(e.actionOn)}. Reporters were told.`:"Waiting for an official action on the tracker."}</span>${e.actionOn?"":`<span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-sim="${e.id}">Demo: record an official action</button></span>`}</div>
+    </div></article>`}).join("");
+  return `<h3 class="ad-h3">Urgent · fast lane</h3><div class="ad-surface">${urgent||adEmpty("Nothing urgent",`No outlet has ${RP.ESC.fastCount} reports within ${RP.ESC.fastHours} hours.`)}</div>
+    <h3 class="ad-h3">Sent to the regulator</h3><div class="ad-surface">${sent||adEmpty("No escalations yet","Outlets are escalated automatically when a rule is met.")}</div>
+    <h3 class="ad-h3">Watching</h3>${adWatchHTML(urg)}`;
+}
 function renderAdmin(tab){
   if(tab!==S.admTab){S.adm.sel=null;S.adm.box=null}
   const allEv=adQueue();
   const vr=Object.entries(PROF).filter(([,p])=>p.level==="pending");
-  const pr=REPORTS.filter(x=>x.status==="pending"||x.status==="review"||x.flag);
-  const tabs=[["verify","Verification requests",vr.length],["evidence","Evidence",allEv.length],["reports","Community reports",pr.length],["scoring","Scoring rules",0],["expiry","Evidence expiry",0]];
+  RP.checkActions();
+  const pr=REPORTS.filter(x=>x.status==="pending"||(x.flag&&x.status!=="rejected"));
+  const urg=RP.urgentOutlets();
+  const tabs=[["verify","Verification requests",vr.length],["evidence","Evidence",allEv.length],["reports","Community reports",pr.length],["escalations","Escalations",urg.length],["scoring","Scoring rules",0],["expiry","Evidence expiry",0],["rules","Escalation rules",0]];
   document.getElementById("admSummary").innerHTML=[["Pending",allEv.length+vr.length],["Reports",pr.length],["Expiring soon",adExpiring()]].map(([l,n])=>`<div><dt>${l}</dt><dd>${n}</dd></div>`).join("");
   document.getElementById("atabs").innerHTML=tabs.map(([k,l,n])=>`<button role="tab" data-atab="${k}" aria-selected="${k===tab}">${l}${n?`<span class="ad-count">${n}</span>`:""}</button>`).join("");
   const nm=rid=>esc(place(rid).name);
-  const liveCheck=`<p class="ad-live"><span class="ad-lbl">Live check</span>Green Leaf Dhaba <b>${scoreOf(3).overall}/100</b><span aria-hidden="true">·</span>Bandra Bao Co. <b>${scoreOf(13).overall}/100</b></p>`;
+  const lc=rid=>`${nm(rid)} <b>${scoreOf(rid).overall}/100</b>${paused(rid)?` <span class="ad-td-muted">(paused publicly)</span>`:""}`;
+  const liveCheck=`<p class="ad-live"><span class="ad-lbl">Live check</span>${lc(3)}<span aria-hidden="true">·</span>${lc(13)}</p>`;
   let h="";
   if(tab==="verify")h=`<div class="ad-surface">${vr.map(([rid,p])=>{const sc=scoreOf(+rid),r=place(+rid);return `<article class="ad-row ad-row-plain">
     <div class="ad-row-body">
@@ -774,16 +941,12 @@ function renderAdmin(tab){
     </div>
     <div class="ad-listhead"><span id="admCount">${n} ${n===1?"item":"items"}</span><span>Select an item to open the review panel</span></div>
     <div class="ad-surface ad-list${A.view==="compact"?" is-compact":""}" id="adList">${adListHTML()}</div>`}
-  if(tab==="reports")h=`<div class="ad-surface">${pr.map(x=>{const r=place(x.rid);return `<article class="ad-row ad-row-plain">
-    <div class="ad-row-body">
-      <div class="ad-row-top">
-        <div class="ad-row-id"><h3 class="ad-fn">${nm(x.rid)}</h3><div class="ad-meta"><span>${esc(r.area)}, ${esc(r.city)}</span><span>Visited ${fmt(x.date)}</span>${x.photo?"<span>Photo attached</span>":""}</div></div>
-        <div class="ad-badges">${rsPill(x.status)}${x.flag?`<span class="ad-badge ad-b-flag">${ICO.flag}Restaurant flagged as incorrect</span>`:""}</div>
-      </div>
-      <blockquote class="ad-quote">${esc(x.text)}</blockquote>
-      ${x.response?`<div class="ad-note"><span class="ad-lbl">Restaurant response</span>${esc(x.response.text)}</div>`:""}
-      <div class="ad-acts"><button class="ad-link" data-r="dismissed" data-rid2="${x.id}">Not substantiated</button><span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-r="resolved" data-rid2="${x.id}">Mark resolved</button><button class="ad-btn ${x.status==="pending"?"ad-btn-out":"ad-btn-pri"}" data-r="verified" data-rid2="${x.id}">Mark verified</button>${x.status==="pending"?`<button class="ad-btn ad-btn-pri" data-r="review" data-rid2="${x.id}">Publish as under review</button>`:""}</span></div>
-    </div></article>`}).join("")||adEmpty("No reports waiting","Every community report has been moderated.")}</div>`;
+  if(tab==="reports")h=`<div class="ad-surface">${pr.map(adReportRow).join("")||adEmpty("No reports waiting","Every community report has been moderated.")}</div>`;
+  if(tab==="escalations")h=adEscalationsHTML(urg);
+  if(tab==="rules")h=`<div class="ad-sechead"><p>Per outlet, only accepted reports with a photo, video or bill, shared with consent, from different numbers count. Changes apply immediately.</p></div>
+    <div class="ad-surface ad-tbl"><table><thead><tr><th>Rule</th><th>Setting</th><th>Value</th></tr></thead><tbody>${RP.RULE_FIELDS.map(([g,fs])=>fs.map(([k,l,mn,mx,step],i)=>`<tr><td>${i?"":`<b>${g}</b>`}</td><td class="ad-td-muted">${l}</td><td><input type="number" min="${mn}" max="${mx}" step="${step}" value="${RP.ESC[k]}" data-esc="${k}" aria-label="${esc(g+": "+l)}"></td></tr>`).join("")).join("")}
+      <tr><td><b>Weights</b></td><td class="ad-td-muted" colspan="2">Established number 1.0 · New number as set above · Kept private or no photo, video or bill 0</td></tr></tbody></table></div>
+    <h3 class="ad-h3">Live status</h3>${adWatchHTML(urg)}`;
   if(tab==="scoring")h=`<div class="ad-sechead"><p>Weights and critical flags apply to every restaurant instantly. Score = weighted met ÷ weighted applicable.</p>${liveCheck}</div>
     <div class="ad-surface ad-tbl"><table><thead><tr><th>Requirement</th><th>Category</th><th>Weight</th><th>Critical</th></tr></thead><tbody>${REQS.map(q=>`<tr><td>${esc(q.text)}</td><td class="ad-td-muted">${CAT[q.cat].name}</td><td><input type="number" min="1" max="5" value="${q.w}" data-w="${q.id}" aria-label="Weight"></td><td><input type="checkbox" ${q.crit?"checked":""} data-c="${q.id}" aria-label="Critical"></td></tr>`).join("")}</tbody></table></div>`;
   if(tab==="expiry")h=`<div class="ad-sechead"><p>How long evidence stays valid before it stops counting towards the score.</p>${liveCheck}</div>
@@ -814,8 +977,18 @@ document.getElementById("adm").addEventListener("click",e=>{
     if(ev.dataset.e==="flag")x.flag=!x.flag;else x.status=ev.dataset.e;toast("Evidence updated");
     if(before&&ev.dataset.e!=="flag"){const after=new Set(adItems().map(y=>y.e.id));const i=before.indexOf(id);S.adm.sel=before.slice(i+1).concat(before.slice(0,i).reverse()).find(y=>after.has(y))??null}
     renderAdmin("evidence");return}
-  const r=e.target.closest("[data-r]");
-  if(r){const x=REPORTS.find(y=>y.id===+r.dataset.rid2);x.status=r.dataset.r;x.flag=false;toast("Report: "+RS[x.status]);renderAdmin("reports");return}
+  const m=e.target.closest("[data-m]");
+  if(m){const x=REPORTS.find(y=>y.id===+m.dataset.rep),a=m.dataset.m;
+    if(a==="accept"){const made=RP.accept(x);toast(made.length?`Accepted · ${made.map(y=>place(y.rid).name).join(", ")} escalated to ${RP.AUTH}`:"Report accepted")}
+    if(a==="reject"){S.adm.rejecting=x.id;renderAdmin("reports");const sel=document.getElementById("admReason");if(sel)sel.focus();return}
+    if(a==="reject-go"){RP.reject(x,document.getElementById("admReason").value.toLowerCase());x.flag=false;toast("Report rejected")}
+    if(a==="more"){RP.askMore(x);toast("Asked the reporter for more")}
+    if(a==="coord"){RP.markCoordinated(x);toast("Marked as coordinated")}
+    if(a==="keep"){x.flag=false;toast("Kept published")}
+    S.adm.rejecting=null;renderAdmin("reports");return}
+  const fa=e.target.closest("[data-fast]");
+  if(fa){const rid=+fa.dataset.rid;if(fa.dataset.fast==="confirm"){RP.confirmFast(rid);toast(`Escalated to ${RP.AUTH}`)}else{const n=RP.coordinatedFast(rid);toast(`${n} reports marked as coordinated`)}renderAdmin("escalations");return}
+  const sm=e.target.closest("[data-sim]");if(sm){RP.simulateAction(+sm.dataset.sim);toast("Official action recorded (demo)");renderAdmin("escalations");return}
   const op=e.target.closest("[data-open]");if(op){adOpen(+op.dataset.open);return}
   const row=e.target.closest(".ad-row[data-row]");
   if(row&&!e.target.closest("button,a,input,select,textarea,label")&&!getSelection().toString())adOpen(+row.dataset.row);
@@ -826,6 +999,8 @@ document.getElementById("adm").addEventListener("input",e=>{
 });
 document.getElementById("adm").addEventListener("change",e=>{
   if(e.target.id==="admSort"){S.adm.sort=e.target.value;adDrawList();return}
+  const ek=e.target.dataset.esc;
+  if(ek){const i=e.target;RP.ESC[ek]=Math.max(+i.min,Math.min(+i.max,+i.value||+i.min));const made=RP.evaluate();if(made.length)toast(`${made.map(y=>place(y.rid).name).join(", ")} escalated to ${RP.AUTH}`);renderAdmin("rules");return}
   const w=e.target.dataset.w,c=e.target.dataset.c,x=e.target.dataset.x;
   if(w){REQ[w].w=Math.max(1,Math.min(5,+e.target.value||1));renderAdmin("scoring")}
   if(c){REQ[c].crit=e.target.checked;renderAdmin("scoring")}
@@ -867,18 +1042,18 @@ function renderHomeExtras(){
   const id=3,r=D.find(x=>x.id===id),c=cur(r),p=PROF[id],sc=scoreOf(id),ec=evCounts(id);
   /* restaurant dashboard preview */
   document.getElementById("ckPrev").innerHTML=`<div class="p5-top"><div><div class="p5-k">Restaurant dashboard · sample</div><div class="p5-n">${esc(r.name)}</div></div>${lvl(p.level)}</div>
-   <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score"><div class="score">${sc.overall}<small>/100</small></div></div>
+   <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score">${pubScore(id,sc.overall)}</div>
    <div class="p5-kpis"><div><b>${sc.done}/${sc.tot}</b><span>Requirements met</span></div><div><b>${ec.total}</b><span>Evidence items</span></div><div><b>${sc.missing.length}</b><span>Need attention</span></div></div></div>
    <div class="p5-sec"><div class="p5-k">Needs attention</div><ul class="p5-list">${sc.missing.slice(0,2).map(m=>`<li><span>${esc(m.r.text)}</span><em>${m.why.toUpperCase()}</em></li>`).join("")}</ul></div>
    <div class="p5-sec"><div class="p5-k">Evidence freshness</div><ul class="p5-list">${["kitchen","pest","personal"].map(k=>{const f=fresh(id,k);return `<li><span style="display:flex;gap:10px;align-items:center"><span class="fd fd-${f.st}"></span>${CAT[k].name}</span><em>${f.txt.toUpperCase()}</em></li>`}).join("")}</ul></div>`;
   /* public profile */
   document.getElementById("pmCard").innerHTML=`<div class="p5-top"><div><div class="p5-k">Food Safety Profile · sample</div><div class="p5-n">${esc(r.name)}</div><div class="muted" style="font-size:13px">${esc(r.area)}, ${esc(r.city)}</div></div>${lvl(p.level)}</div>
-   <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score"><div class="score">${sc.overall}<small>/100</small></div><dl class="scoremeta"><dt>Evidence</dt><dd>${ec.total} pieces</dd><dt>Last updated</dt><dd>${ec.last?ago(ec.last):"—"}</dd></dl></div>${barsHTML(sc)}</div>
+   <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score">${pubScore(id,sc.overall)}<dl class="scoremeta"><dt>Evidence</dt><dd>${ec.total} pieces</dd><dt>Last updated</dt><dd>${ec.last?ago(ec.last):"—"}</dd></dl></div>${barsHTML(sc)}</div>
    <div class="p5-sec" style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center"><span class="tag tag-off">Official status</span>${st(c[1])}</div>`;
   document.getElementById("pmOpen").onclick=()=>go("detail",id);
   /* journey */
-  const pts=[...p.journey.map(j=>({m:j.m,s:j.score,k:j.kind,n:j.notes})),{m:"Sep 2026 · now",s:sc.overall,k:"Current",n:sc.missing.length?[sc.missing.length+" requirement"+(sc.missing.length>1?"s":"")+" open"]:["All requirements met"],now:true}];
-  document.getElementById("jrChart").innerHTML=`<div class="tl5">${pts.map(q=>`<div class="tl5-i ${q.now?"now":""}"><span class="tl5-m">${esc(q.m)}</span><span class="tl5-dot"></span><b>${q.s}<small>/100</small></b><span class="k2">${esc(q.k)}</span><ul>${q.n.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`).join("")}</div><p class="tl5-note">Sample: ${esc(r.name)}'s evidence over three months. Scores are recalculated as evidence is added or expires.</p>`;
+  const pts=[...p.journey.map(j=>({m:j.m,s:j.score,k:j.kind,n:j.notes})),{m:"Sep 2026 · now",s:paused(id)?null:sc.overall,k:paused(id)?"Score paused while an official action is open":"Current",n:sc.missing.length?[sc.missing.length+" requirement"+(sc.missing.length>1?"s":"")+" open"]:["All requirements met"],now:true}];
+  document.getElementById("jrChart").innerHTML=`<div class="tl5">${pts.map(q=>`<div class="tl5-i ${q.now?"now":""}"><span class="tl5-m">${esc(q.m)}</span><span class="tl5-dot"></span><b>${q.s==null?"—":q.s+"<small>/100</small>"}</b><span class="k2">${esc(q.k)}</span><ul>${q.n.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`).join("")}</div><p class="tl5-note">Sample: ${esc(r.name)}'s evidence over three months. Scores are recalculated as evidence is added or expires.</p>`;
   /* community */
   const x=REPORTS.find(y=>y.id===1);
   document.getElementById("cmExample").innerHTML=`<div class="p5-top"><div><div class="p5-k">Community report · sample</div><div class="p5-n">${esc(r.name)}</div></div>${rsPill(x.status)}</div>
@@ -904,7 +1079,7 @@ heroCards();initHero();renderHomeExtras();
             {d:"Mar 2024",a:"Licence active",src:"FSSAI licence search (sample)",desc:"Licence renewed. No regulatory action on record at the time."}];
   const JR=[{m:"JUL 2026",s:78,n:"Self-reported evidence, submitted before any inspection."},
             {m:"AUG 2026",s:61,n:"Score fell: storage and pest-control evidence expired, and one photo was rejected."},
-            {m:"SEP 2026",s:84,n:"Corrective evidence uploaded after the suspension. The official suspension still shows first until the FDA lifts it."}];
+            {m:"SEP 2026",s:null,n:"Corrective evidence uploaded after the suspension. Score paused while an official action is open: our score measures submitted evidence and never overrides an official finding."}];
   const DM={step:0,q:"",typed:false,tl:0,jr:2,cat:"Pest activity",ups:new Set(),sent:false,resp:false,ev:false,rev:false,seen:new Set([0])};
   const body=document.getElementById("brBody"),rail=document.getElementById("rail");
   const card=(k,t)=>`<div class="dm"><div class="dm-k">${k}</div>${t}</div>`;
@@ -927,9 +1102,9 @@ heroCards();initHero();renderHomeExtras();
         <div class="ev-com"><span class="tag tag-com">Community report</span><div class="row"><b>“Customer reported pest activity.”</b><span class="rs rs-review">Under review</span></div><div class="sub">Moderated before publishing · not a regulatory finding</div></div>
       </div>`);
     if(s===4){const j=JR[DM.jr];return card("Step 05 · See the journey",`<h3 class="dm-h">Compliance journey</h3><p class="dm-p">PlateWatch shows change over time rather than permanently labelling a restaurant. Drag or tap through the months.</p>
-      <div class="dm-jr"><div class="pts">${JR.map((x,i)=>`<button class="pt" data-jr="${i}" aria-pressed="${i===DM.jr}"><span class="m">${x.m}</span><b>${x.s}</b><i></i></button>`).join("")}</div>
+      <div class="dm-jr"><div class="pts">${JR.map((x,i)=>`<button class="pt" data-jr="${i}" aria-pressed="${i===DM.jr}"><span class="m">${x.m}</span><b${x.s==null?' class="pz-b"':""}>${x.s==null?"Paused":x.s}</b><i></i></button>`).join("")}</div>
       <input type="range" min="0" max="2" step="1" value="${DM.jr}" id="jrRange" aria-label="Month">
-      <div class="note"><b>${j.m.charAt(0)+j.m.slice(1,3).toLowerCase()} · ${j.s}/100.</b> ${j.n}</div></div>`)}
+      <div class="note"><b>${j.m.charAt(0)+j.m.slice(1,3).toLowerCase()} · ${j.s==null?"score paused":j.s+"/100"}.</b> ${j.n}</div></div>`)}
     if(s===5)return card("Step 06 · Report something",`<h3 class="dm-h">Saw something concerning?</h3><p class="dm-p"><b style="color:var(--ink)">Demo — nothing will be submitted.</b></p>
       <form class="dm-form" id="dmRep">
         <div><label for="dr-area">Area</label><input id="dr-area" value="Fort, Mumbai"></div>
@@ -960,7 +1135,7 @@ heroCards();initHero();renderHomeExtras();
     bind();
     if(focus){const sel=rail.querySelector('[aria-selected="true"]');if(sel&&sel.scrollIntoView&&innerWidth<=900)sel.scrollIntoView({block:"nearest",inline:"center"})}
   }
-  function syncJr(){const x=JR[DM.jr];body.querySelectorAll("[data-jr]").forEach(b=>b.setAttribute("aria-pressed",String(+b.dataset.jr===DM.jr)));const r=document.getElementById("jrRange");if(r)r.value=DM.jr;const n=body.querySelector(".dm-jr .note");if(n)n.innerHTML=`<b>${x.m.charAt(0)+x.m.slice(1,3).toLowerCase()} · ${x.s}/100.</b> ${x.n}`}
+  function syncJr(){const x=JR[DM.jr];body.querySelectorAll("[data-jr]").forEach(b=>b.setAttribute("aria-pressed",String(+b.dataset.jr===DM.jr)));const r=document.getElementById("jrRange");if(r)r.value=DM.jr;const n=body.querySelector(".dm-jr .note");if(n)n.innerHTML=`<b>${x.m.charAt(0)+x.m.slice(1,3).toLowerCase()} · ${x.s==null?"score paused":x.s+"/100"}.</b> ${x.n}`}
   function goStep(n){DM.step=Math.max(0,Math.min(7,n));render(true)}
   function bind(){
     const f=document.getElementById("dmForm");
@@ -997,10 +1172,10 @@ heroCards();initHero();renderHomeExtras();
   /* ---------- restaurant mini dashboard ---------- */
   const NOTES=["Owners verify with their FSSAI licence number and a one-time code to the owner's phone.","27 requirements across 7 categories, based on public FSSAI hygiene parameters.","Photos, videos and PDFs, each dated. Evidence expires, so the profile stays live.","Owners are notified of every report and can reply publicly with evidence.","Our team reviews the evidence. Approved profiles show Platform verified."];
   function rsDash(active){
-    const id=3,r=D.find(x=>x.id===id),p=PROF[id],sc=scoreOf(id),ec=evCounts(id),nrep=REPORTS.filter(x=>x.rid===id).length;
+    const id=3,r=D.find(x=>x.id===id),p=PROF[id],sc=scoreOf(id),ec=evCounts(id),nrep=REPORTS.filter(x=>x.rid===id&&RP.visibleToRestaurant(x)).length;
     document.getElementById("rsDash").innerHTML=`
       <div class="p5-top" data-hl="0"><div><div class="p5-k">Restaurant dashboard · sample</div><div class="p5-n">${esc(r.name)}</div><div class="muted" style="font-size:13px">Claimed by owner · ${esc(r.area)}, ${esc(r.city)}</div></div><span data-hl="4">${lvl(p.level)}</span></div>
-      <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score"><div class="score">${sc.overall}<small>/100</small></div></div>
+      <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score">${pubScore(id,sc.overall)}</div>
       <div class="p5-kpis"><div data-hl="1"><b>${sc.done}/${sc.tot}</b><span>Requirements complete</span></div><div data-hl="2"><b>${ec.total}</b><span>Evidence submissions</span></div><div data-hl="3"><b>${nrep}</b><span>Community reports</span></div></div></div>`;
     document.querySelectorAll("#rsDash [data-hl]").forEach(el=>el.classList.toggle("hl",+el.dataset.hl===active));
     document.getElementById("rsNote").textContent=NOTES[active];
@@ -1013,4 +1188,5 @@ heroCards();initHero();renderHomeExtras();
 
 
 renderSeg();renderList();syncAuthBtn();
+{const t=parseHash(location.hash);if(t)go(t.p,t.arg,{fromHash:true});else history.replaceState(null,"","#home")}
 }

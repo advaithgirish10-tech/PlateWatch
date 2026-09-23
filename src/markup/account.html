@@ -9,6 +9,8 @@
       <div>
         <h2 class="h-mid">Restaurants you follow</h2>
         <div id="followList" style="margin-top:14px;border-top:1.5px solid var(--ink)"></div>
+        <h2 class="h-mid" style="margin-top:48px">My reports</h2>
+        <div id="myReports" style="margin-top:14px;border-top:1.5px solid var(--ink)"></div>
       </div>
       <div>
         <h2 class="h-mid">Areas you watch</h2>
@@ -18,6 +20,13 @@
           <input class="input" id="newArea" placeholder="e.g. Bandra West" required>
           <div><button class="pillbtn out" type="submit">Watch area</button></div>
         </form>
+        <h2 class="h-mid" style="margin-top:48px">Your details</h2>
+        <form class="form" id="nameForm" style="margin-top:14px">
+          <label for="accName">Your name <span class="muted">(optional)</span></label>
+          <input class="input" id="accName" autocomplete="given-name" placeholder="Add your name">
+          <div><button class="pillbtn out" type="submit">Save name</button></div>
+        </form>
+        <label class="check" style="margin-top:22px"><input type="checkbox" id="waToggle"><span id="waLabel">Send alerts on WhatsApp</span></label>
         <div style="margin-top:40px;display:flex;gap:16px;flex-wrap:wrap">
           <button class="x" id="signout">Sign out</button>
           <button class="x" id="deldata">Delete my data</button>
