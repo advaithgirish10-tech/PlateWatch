@@ -13,7 +13,10 @@ const todayISO=TODAY.toISOString().slice(0,10);
 /* the demo clock: today's sample date at the viewer's current time of day */
 const NOW0=(()=>{const d=new Date(TODAY),r=new Date();d.setUTCHours(r.getHours(),r.getMinutes(),0,0);return d.getTime()})();
 const T0=Date.now();
-const now=()=>NOW0+(Date.now()-T0);
+let skew=0;
+const now=()=>NOW0+(Date.now()-T0)+skew;
+/* demo only: move the shared clock forward (Admin → Spot checks → Skip 2 hours) */
+const advance=ms=>{skew+=ms};
 const place=rid=>D.find(r=>r.id===rid);
 
 /* ---------- rules (editable in Admin → Escalation rules) ---------- */
@@ -65,11 +68,13 @@ REPORTS.forEach(x=>{
 
 /* ---------- reporter threads ---------- */
 const THREADS={};let anon=[];
-const thread=()=>S.user?(THREADS[S.user.phone]=THREADS[S.user.phone]||[]):anon;
+/* viewAs: the chat is showing a restaurant owner's thread (spot checks) instead of the reporter's */
+let viewAs=null;
+const thread=()=>viewAs?(THREADS[viewAs]=THREADS[viewAs]||[]):S.user?(THREADS[S.user.phone]=THREADS[S.user.phone]||[]):anon;
 function notify(phone,text){
   if(!phone)return;
   (THREADS[phone]=THREADS[phone]||[]).push({who:"bot",html:esc(text),upd:true});
-  if(isOpen()&&S.user&&S.user.phone===phone)renderLog();
+  if(isOpen()&&(viewAs?viewAs===phone:S.user&&S.user.phone===phone))renderLog();
 }
 
 /* ---------- reporter-facing status ---------- */
@@ -352,10 +357,26 @@ function addEvidence(f,kind){
 /* ---------- open / close, keyboard ---------- */
 function open(opt){
   opt=opt||{};
+  if(viewAs){viewAs=null;C={active:false,buttons:[]}}
+  $("botTitle").textContent="PlateWatch reports";
   lastFocus=document.activeElement;
   root.hidden=false;document.documentElement.classList.add("bot-lock");
   if(opt.rid||opt.name!=null||!C.active)start(opt);else{renderLog();renderQuick()}
   setTimeout(()=>{const b=quick.querySelector("button");(C.onText||!b?input:b).focus()},0);
+}
+/* open the chat as another number's thread and hand the conversation to the caller (spot checks) */
+function openAs(phone,title,run){
+  lastFocus=document.activeElement;viewAs=phone;
+  root.hidden=false;document.documentElement.classList.add("bot-lock");
+  $("botTitle").textContent=title;
+  C={active:true,buttons:[],onText:null,onFile:null};renderLog();
+  run({say,me,ask,end,photoBubble});
+  setTimeout(()=>{const b=quick.querySelector("button");(b||input).focus()},0);
+}
+function photoBubble(f){
+  let url=null;try{url=URL.createObjectURL(f)}catch(_){}
+  me(url?`<img class="bm-img" src="${url}" alt="Spot-check photo"><span class="bm-file">${esc(f.name)}</span>`:`<span class="bm-file">📷 ${esc(f.name)}</span>`);
+  return url;
 }
 function close(){
   root.hidden=true;document.documentElement.classList.remove("bot-lock");
@@ -365,7 +386,7 @@ function close(){
 quick.addEventListener("click",e=>{
   const b=e.target.closest("[data-bq]");if(!b)return;
   const q=C.buttons[+b.dataset.bq];
-  if(q.file){pendingKind=q.file.kind;fileIn.accept=q.file.accept;fileIn.click();return}
+  if(q.file){pendingKind=q.file.kind;fileIn.accept=q.file.accept;if(q.file.capture)fileIn.setAttribute("capture","environment");else fileIn.removeAttribute("capture");fileIn.click();return}
   if(!q.keep){me(esc(q.echo||q.label));C.buttons=[];renderQuick()}
   q.fn();
   setTimeout(()=>{const f=quick.querySelector("button");if(!C.onText&&f)f.focus();else input.focus()},0);
@@ -375,7 +396,7 @@ form.addEventListener("submit",e=>{
   me(esc(v));
   if(C.onText){const fn=C.onText;fn(v)}else say(C.buttons.length?"Tap one of the options above.":"Tap Report on the site to start a new report.");
 });
-attach.addEventListener("click",()=>{if(!C.onFile)return;pendingKind=null;fileIn.accept="image/*,video/*,.pdf";fileIn.click()});
+attach.addEventListener("click",()=>{if(!C.onFile)return;pendingKind=null;fileIn.removeAttribute("capture");fileIn.accept="image/*,video/*,.pdf";fileIn.click()});
 fileIn.addEventListener("change",()=>{const f=fileIn.files[0];fileIn.value="";if(!f||!C.onFile)return;const k=pendingKind;pendingKind=null;C.onFile(f,k)});
 root.addEventListener("click",e=>{if(e.target.closest("[data-bot-close]"))close()});
 document.addEventListener("keydown",e=>{
@@ -390,7 +411,7 @@ document.addEventListener("keydown",e=>{
 });
 
 evaluate();
-return {open,close,isOpen,notify,registerNumber,numberAge,ageText,isNewNumber,ESC,RULE_FIELDS,USERS,ESCALATIONS,AUTH,
+return {open,openAs,close,isOpen,notify,now,advance,registerNumber,numberAge,ageText,isNewNumber,ESC,RULE_FIELDS,USERS,ESCALATIONS,AUTH,
   isAccepted,visibleToRestaurant,hasEvidence,evidenceText,weight,countsInfo,stage,stagesHTML,STAGES,outletName,
   standard,fastLane,urgentOutlets,evaluate,confirmFast,coordinatedFast,checkActions,simulateAction,packetText,lastEscalation,
   accept,reject,askMore,markCoordinated,ownerResponded,complaintText};

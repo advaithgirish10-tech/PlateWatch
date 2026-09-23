@@ -7,6 +7,7 @@
  */
 /* global QRCode */
 import { createReporting } from "./bot.js";
+import { createSpotChecks } from "./spotcheck.js";
 export function initApp() {
 const TYPES={sus:["Suspended","st-sus",""],rev:["Revoked","st-rev",""],imp:["Improvement notice","st-imp",""],ok:["Reinstated","st-ok",""]};
 const D=[
@@ -395,7 +396,7 @@ const PROF={};
   const g={owner:"98200 11223",level:"platform",verifiedOn:"2026-09-12",adminNote:"",resp:{},ev:{},
     journey:[{m:"Jul 2026",score:61,kind:"Issues found",notes:["Pest-control records missing","Raw and cooked food shared a shelf","Staff training documents missing"]},
              {m:"Aug 2026",score:84,kind:"Issues resolved",notes:["Pest-control contract and records uploaded","New separate storage shelving photographed"]}]};
-  const ages={kitchen:3,storage:8,pest:43,personal:10,clean:5,docs:20,ops:6};
+  const ages={kitchen:3,storage:25,pest:43,personal:10,clean:5,docs:20,ops:6};
   REQS.forEach(r=>{g.resp[r.id]="yes";g.ev[r.id]=[mkEv(r.id,ages[r.cat])]});
   g.resp.o4="no";g.ev.o4=[];
   g.ev.h3=[mkEv("h3",70)];
@@ -423,6 +424,15 @@ function loginAs(ph){if(S.user&&S.user.phone===ph)return;S.user={phone:ph,name:"
 /* refresh whichever page shows report state after the chat or a moderator changes it */
 function refreshReports(){if(!document.getElementById("p-account").hidden&&S.user)renderAccount();if(!document.getElementById("p-admin").hidden)renderAdmin(S.admTab||"reports");if(!document.getElementById("p-detail").hidden&&S.page.p==="detail")renderDetail(S.page.arg);if(!document.getElementById("p-dash").hidden&&S.owner!=null)renderDash(S.dashTab||"overview")}
 const RP=createReporting({D,REPORTS,S,esc,fmt,st,cur,toast,findPlaces,copyText,selectNode,TODAY,newId:()=>RID++,loginAs,onChange:refreshReports});
+/* reviewer-approved photo evidence (spot checks and seeds); it counts as fresh evidence for that item */
+function addApprovedPhoto(rid,req,o){
+  const p=PROF[rid],e={id:EVID++,name:o.name,type:"photo",date:o.date,status:"verified",note:"",url:o.url,ai:o.ai,flag:false,src:o.src||"checkup",people:!!o.people,sample:!!o.sample};
+  (p.ev[req]=p.ev[req]||[]).push(e);if(p.resp[req]!=="yes")p.resp[req]="yes";return e;
+}
+const SCM=createSpotChecks({D,PROF,REQS,REQ,CAT,CATS,RP,esc,fmt,toast,aiFor,addEvidence:addApprovedPhoto,onChange:refreshReports});
+/* the verification badge, paused publicly after two missed spot checks in a row */
+const lvlFor=rid=>SCM.pausedBadge(rid)?`<span class="lvl lvl-paused">Verification paused: missed spot checks</span>`:lvl(PROF[rid].level);
+const levelText=rid=>SCM.pausedBadge(rid)?"Verification paused: missed spot checks":LV[PROF[rid].level];
 
 function currentEv(rid,reqId){const p=PROF[rid];const c=CAT[REQ[reqId].cat];return (p.ev[reqId]||[]).filter(e=>e.status!=="rejected"&&daysAgo(e.date)<=c.expiry)}
 function scoreOf(rid){
@@ -479,16 +489,18 @@ function renderDetail(id){
   let comp="";
   if(p){const sc=scoreOf(id),ec=evCounts(id),pz=paused(id);
     comp=`<div class="lane">
-      <span class="tag ${p.level==="platform"?"tag-plat":"tag-self"}">${p.level==="platform"?"Platform verified · reviewed "+fmt(p.verifiedOn):"Restaurant-submitted · not yet verified"}</span>
+      <span class="tag ${p.level==="platform"&&!SCM.pausedBadge(id)?"tag-plat":"tag-self"}">${SCM.pausedBadge(id)?"Verification paused: missed spot checks":p.level==="platform"?"Platform verified · reviewed "+fmt(p.verifiedOn):"Restaurant-submitted · not yet verified"}</span>
+      ${SCM.missedHTML(id)}
       <h2 class="h-mid">Food Safety Compliance</h2>
       <div class="scorewrap">${pubScore(id,sc.overall)}
-        <dl class="scoremeta">${pz?"":`<dt>Rating</dt><dd>${grade(sc.overall)}</dd>`}<dt>Requirements met</dt><dd>${sc.done} / ${sc.tot}</dd><dt>Last updated</dt><dd>${lastUpdated(id)}</dd><dt>Level</dt><dd>${LV[p.level]}</dd></dl></div>
+        <dl class="scoremeta">${pz?"":`<dt>Rating</dt><dd>${grade(sc.overall)}</dd>`}<dt>Requirements met</dt><dd>${sc.done} / ${sc.tot}</dd><dt>Last updated</dt><dd>${lastUpdated(id)}</dd><dt>Level</dt><dd>${levelText(id)}</dd></dl></div>
       ${sc.crit.length?`<div class="crit"><b class="m">!</b><div><b>Critical requirement${sc.crit.length>1?"s":""} need${sc.crit.length>1?"":"s"} attention</b><br>${sc.crit.map(q=>esc(q.text)).join("; ")}</div></div>`:""}
       ${barsHTML(sc)}
       <h3 style="font-size:17px;margin-top:30px">Evidence freshness</h3>${freshHTML(id)}
       <div class="evc"><span><b>${ec.total}</b> pieces of evidence</span><span><b>${ec.photo}</b> photos</span><span><b>${ec.video}</b> videos</span><span><b>${ec.document}</b> documents</span><span>Last upload ${ec.last?ago(ec.last):"—"}</span></div>
       <p class="disc">PlateWatch's own score, calculated from the restaurant's evidence against ${REQS.length} food-safety requirements. It is not an FSSAI hygiene rating or a government certificate.</p>
     </div>
+    <div class="lane"><span class="tag tag-self">Restaurant-submitted · reviewed by PlateWatch</span><h2 class="h-mid">Kitchen gallery</h2><p class="gal-sub">Photos submitted by the restaurant, reviewed by PlateWatch.</p>${SCM.galleryHTML(id)}</div>
     <div class="lane"><span class="tag tag-self">Restaurant-submitted · scored by PlateWatch</span><h2 class="h-mid">Compliance journey</h2>${journeySVG(id,pz)}${journeyList(id,pz)}</div>`;
   } else {
     comp=`<div class="lane"><span class="tag tag-self">Restaurant-submitted</span><div class="claimbox"><div><h2 class="h-mid">No compliance profile yet</h2><p class="muted" style="margin:6px 0 0">This restaurant hasn't claimed its page or submitted evidence.</p></div><button class="pillbtn out" id="claimThis">Own this place? Claim it</button></div></div>`;
@@ -500,7 +512,7 @@ function renderDetail(id){
   <button class="back" id="back">← Back to ${esc(pageName(bt))}</button>
   <div class="sumline">${st(c[1])}<p class="sumline-t">${esc(sum)}</p></div>
   <div class="dhead">
-    <div>${p?lvl(p.level):""}<h1 class="h-big"${p?' style="margin-top:16px"':""}>${esc(r.name)}</h1><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</div></div>
+    <div>${p?lvlFor(id):""}<h1 class="h-big"${p?' style="margin-top:16px"':""}>${esc(r.name)}</h1><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</div></div>
     <div class="sharebar">
       <div class="sharebar-btns"><button class="pillbtn ${f?"out":""}" id="followBtn">${f?"✓ Following":"Follow for alerts"}</button><a class="pillbtn out" id="shareWa" href="${esc(wa)}" target="_blank" rel="noopener">Share on WhatsApp</a><button class="pillbtn out" id="copyLink" type="button">Copy link</button></div>
       <span class="shareurl" id="profUrl">${esc(url)}</span>
@@ -609,10 +621,16 @@ function notifs(rid){const p=PROF[rid],out=[];
 function nextBest(sc){
   return [...sc.missing].sort((a,b)=>(b.r.crit-a.r.crit)||(b.r.w-a.r.w)||((b.why==="Evidence expired")-(a.why==="Evidence expired"))).slice(0,3);
 }
-function nextBestHTML(sc){
-  const top=nextBest(sc);if(!top.length)return "";
+/* items whose newest current evidence expires within 7 days */
+function expiringSoon(rid){
+  const p=PROF[rid];
+  return REQS.filter(q=>p.resp[q.id]==="yes").map(q=>{const cur=currentEv(rid,q.id);if(!cur.length)return null;const newest=Math.min(...cur.map(e=>daysAgo(e.date)));return {r:q,left:CAT[q.cat].expiry-newest}})
+    .filter(x=>x&&x.left>=0&&x.left<=7).sort((a,b)=>a.left-b.left||(b.r.crit-a.r.crit)||(b.r.w-a.r.w)).slice(0,3);
+}
+function nextBestHTML(sc,rid){
+  const top=nextBest(sc),exp=rid!=null?expiringSoon(rid):[];if(!top.length&&!exp.length)return "";
   return `<div class="nba"><div class="nba-h"><h3>Do these next</h3><span class="muted">Highest impact on your score</span></div>
-    <ol>${top.map(m=>`<li><div class="nba-t"><span>${esc(m.r.text)}</span><span class="nba-m">${m.r.crit?"<b>Critical</b> · ":""}Weight ${m.r.w} · ${CAT[m.r.cat].name} · ${m.why}</span></div><button class="pillbtn out sm" data-jump="${m.r.id}">Fix this</button></li>`).join("")}</ol></div>`;
+    <ol>${top.map(m=>`<li><div class="nba-t"><span>${esc(m.r.text)}</span><span class="nba-m">${m.r.crit?"<b>Critical</b> · ":""}Weight ${m.r.w} · ${CAT[m.r.cat].name} · ${m.why}</span></div><button class="pillbtn out sm" data-jump="${m.r.id}">Fix this</button></li>`).join("")}${exp.map(x=>`<li><div class="nba-t"><span>${esc(x.r.text)}</span><span class="nba-m"><b>${x.left===0?"Expires today":`Expires in ${x.left} day${x.left===1?"":"s"}`}</b> · ${CAT[x.r.cat].name} · evidence valid ${CAT[x.r.cat].expiry} days</span></div><button class="pillbtn out sm" data-jump="${x.r.id}">Refresh</button></li>`).join("")}</ol></div>`;
 }
 function renderDash(tab){
   const rid=S.owner,r=D.find(x=>x.id===rid),p=PROF[rid],sc=scoreOf(rid),ec=evCounts(rid);
@@ -622,9 +640,9 @@ function renderDash(tab){
   if(tab==="overview"){
     const ns=notifs(rid);
     const canReq=p.level==="self"&&sc.unanswered===0;
-    body=`<div style="padding-top:30px">${nextBestHTML(sc)}</div><div class="ov" style="padding-top:26px"><div>
+    body=`<div style="padding-top:30px">${nextBestHTML(sc,rid)}</div><div class="ov" style="padding-top:26px"><div>
       <span class="tag tag-self">Your Food Safety Compliance</span>
-      <div class="scorewrap"><div><div class="score">${sc.overall}<small>/100</small></div>${paused(rid)?`<p class="pz-own">Paused publicly until the official action is closed.</p>`:""}</div><dl class="scoremeta"><dt>Rating</dt><dd>${grade(sc.overall)}</dd><dt>Last updated</dt><dd>${lastUpdated(rid)}</dd><dt>Verification</dt><dd>${LV[p.level]}</dd></dl></div>
+      <div class="scorewrap"><div><div class="score">${sc.overall}<small>/100</small></div>${paused(rid)?`<p class="pz-own">Paused publicly until the official action is closed.</p>`:""}</div><dl class="scoremeta"><dt>Rating</dt><dd>${grade(sc.overall)}</dd><dt>Last updated</dt><dd>${lastUpdated(rid)}</dd><dt>Verification</dt><dd>${levelText(rid)}</dd></dl></div>
       ${progHTML(sc.done,sc.tot)}
       ${sc.crit.length?`<div class="crit"><b class="m">!</b><div><b>Critical requirement${sc.crit.length>1?"s":""} need attention</b><br>${sc.crit.map(q=>esc(q.text)).join("; ")}<br><button data-tab="checkup">Fix in checkup</button></div></div>`:""}
       <div class="kpis"><div><b>${sc.done}/${sc.tot}</b><span>Requirements met</span></div><div><b>${ec.total}</b><span>Evidence submitted</span></div><div><b>${sc.missing.length}</b><span>Need attention</span></div></div>
@@ -633,7 +651,7 @@ function renderDash(tab){
       <h3 style="font-size:17px;margin-top:30px">Evidence freshness</h3>${freshHTML(rid)}
     </div><div>
       <h3 style="font-size:20px;font-weight:700;font-stretch:108%;margin-bottom:12px">Verification</h3>
-      <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center">${lvl(p.level)}
+      <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center">${lvlFor(rid)}
         ${p.level==="self"?`<button class="pillbtn sm" id="reqVer" ${canReq?"":"disabled"}>Request verification</button>`:""}
         ${p.level==="platform"?`<span class="muted">Reviewed ${fmt(p.verifiedOn)}</span>`:""}</div>
       ${p.level==="self"&&!canReq?`<p class="muted" style="margin-top:8px">Answer all requirements first (${sc.unanswered} left).</p>`:""}
@@ -642,11 +660,14 @@ function renderDash(tab){
       <div class="notif">${ns.map(n=>`<div><span>${n}</span></div>`).join("")||`<p class="muted" style="padding-top:12px">Nothing new.</p>`}</div>
       <h3 style="font-size:20px;font-weight:700;font-stretch:108%;margin:34px 0 12px">Needs attention</h3>
       <div class="miss">${sc.missing.slice(0,8).map(m=>`<button data-jump="${m.r.id}"><span>${m.r.crit?"<b>Critical · </b>":""}${esc(m.r.text)}</span><em>${m.why.toUpperCase()}</em></button>`).join("")||`<p class="muted" style="padding-top:12px">All requirements met.</p>`}</div>
-    </div></div>`;
+      <h3 style="font-size:20px;font-weight:700;font-stretch:108%;margin:34px 0 12px">Spot checks</h3>
+      ${SCM.historyHTML(rid)}
+    </div></div>
+    <section class="sc-preview"><span class="tag tag-self">What diners see</span><h2 class="h-mid">Your kitchen gallery</h2><p class="gal-sub">Only photos our reviewers approved. Spot-check photos are tagged.</p>${SCM.galleryHTML(rid)}</section>`;
   }
   if(tab==="checkup"){
     body=`<div class="stick"><span>Score now <b>${sc.overall}/100</b>${paused(rid)?" (paused publicly)":""} · ${sc.done}/${sc.tot} met${sc.unanswered?` · ${sc.unanswered} unanswered`:""}</span><span class="muted" style="font-size:13px">Based on public FSSAI hygiene parameters. Not an official FSSAI audit.</span></div>
-    <div style="padding-top:24px">${nextBestHTML(sc)}${progHTML(sc.done,sc.tot)}</div>
+    <div style="padding-top:24px">${nextBestHTML(sc,rid)}${progHTML(sc.done,sc.tot)}</div>
     ${CATS.map(c=>{const reqs=REQS.filter(q=>q.cat===c.k);const x=sc.cats[c.k];return `<details class="cat" data-cat="${c.k}" ${S.openCats.has(c.k)?"open":""}><summary><h3>${c.name}</h3><span class="catprog"><span class="prog-t" aria-hidden="true"><i style="width:${x.tot?Math.round(x.done/x.tot*100):0}%"></i></span><span>${x.done} of ${x.tot}</span></span><span class="p">${x.pct==null?"N/A":x.pct+"%"} · evidence valid ${c.expiry} days</span><span class="ch" aria-hidden="true">+</span></summary>
       ${reqs.map(q=>{const a=p.resp[q.id];const evs=p.ev[q.id]||[];return `<div class="req" id="req-${q.id}">
         <div><div class="q">${esc(q.text)}</div><div class="qm">${q.crit?'<span class="c">■ Critical</span>':""}<span>Weight ${q.w}</span>${a==="yes"&&!currentEv(rid,q.id).length?"<span class='c'>Evidence needed</span>":""}</div></div>
@@ -656,7 +677,7 @@ function renderDash(tab){
         <div class="evrow"><label class="upl">+ Add photo, video or PDF<input type="file" accept="image/*,video/*,.pdf" data-up="${q.id}"></label></div>
         <input class="noteinput" placeholder="Add a note for the reviewer (optional)" data-note="${q.id}" aria-label="Note for ${esc(q.text)}">
       </div>`}).join("")}</details>`}).join("")}
-    <div style="padding-block:34px 70px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">${p.level==="self"?`<button class="pillbtn" id="reqVer2" ${sc.unanswered?"disabled":""}>Request verification</button>`:lvl(p.level)}<span class="muted">${sc.unanswered?sc.unanswered+" requirement(s) still unanswered":"All requirements answered"}</span></div>`;
+    <div style="padding-block:34px 70px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">${p.level==="self"?`<button class="pillbtn" id="reqVer2" ${sc.unanswered?"disabled":""}>Request verification</button>`:lvlFor(rid)}<span class="muted">${sc.unanswered?sc.unanswered+" requirement(s) still unanswered":"All requirements answered"}</span></div>`;
   }
   if(tab==="reports"){
     const reps=REPORTS.filter(x=>x.rid===rid&&RP.visibleToRestaurant(x));
@@ -676,11 +697,12 @@ function renderDash(tab){
     body=`<div class="split" style="padding-top:36px"><div><h2 class="h-mid">Put your profile on the table</h2><p class="muted" style="max-width:44ch">Diners scan and see your score, verification level, official status, evidence freshness, reports and your responses.</p>
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:18px"><span style="font-family:var(--mono);font-size:14px;word-break:break-all" id="qrurl">${url}</span><button class="pillbtn out sm" id="copyqr">Copy link</button></div>
       <p class="muted" style="font-size:13px;margin-top:14px">In the live product this downloads as a print-ready A5 PDF. The link here is a placeholder domain.</p></div>
-      <div class="poster"><span class="eyebrow" style="color:#9A9A9A">PlateWatch</span><div class="ptitle">SCAN TO VIEW OUR FOOD SAFETY PROFILE</div><div class="qrbox" id="qr"></div><div style="font-size:14px">${esc(r.name)}</div><div style="font-family:var(--mono);font-size:11px;color:#9A9A9A">${LV[p.level].toUpperCase()} · ${paused(rid)?"SCORE PAUSED":sc.overall+"/100"}</div></div></div>`;
+      <div class="poster"><span class="eyebrow" style="color:#9A9A9A">PlateWatch</span><div class="ptitle">SCAN TO VIEW OUR FOOD SAFETY PROFILE</div><div class="qrbox" id="qr"></div><div style="font-size:14px">${esc(r.name)}</div><div style="font-family:var(--mono);font-size:11px;color:#9A9A9A">${levelText(rid).toUpperCase()} · ${paused(rid)?"SCORE PAUSED":sc.overall+"/100"}</div></div></div>`;
   }
   document.getElementById("dash").innerHTML=`
-    <div class="dashtop"><div><div class="eyebrow">Restaurant dashboard · owner +91 ${esc(p.owner)}</div><h1 class="h-big" style="margin-top:10px">${esc(r.name)}</h1><div class="muted" style="margin-top:6px">${esc(r.area)}, ${esc(r.city)} · ${lvl(p.level)}</div></div>
+    <div class="dashtop"><div><div class="eyebrow">Restaurant dashboard · owner +91 ${esc(p.owner)}</div><h1 class="h-big" style="margin-top:10px">${esc(r.name)}</h1><div class="muted" style="margin-top:6px">${esc(r.area)}, ${esc(r.city)} · ${lvlFor(rid)}</div></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="pillbtn out sm" id="viewPub">View public profile</button><button class="x" id="ownOut">Sign out</button></div></div>
+    ${SCM.bannerHTML(rid)}
     <div class="dtabs" role="tablist">${tabs.map(([k,l])=>`<button role="tab" data-tab="${k}" aria-selected="${k===tab}">${l}</button>`).join("")}</div>${body}`;
   S.dashTab=tab;
   if(tab==="qr"){try{new QRCode(document.getElementById("qr"),{text:"https://platewatch.in/restaurant/"+rid+"/safety",width:170,height:170,colorDark:"#0A0A0A",colorLight:"#FFFFFF"})}catch(e){document.getElementById("qr").innerHTML='<span style="font:12px var(--mono);color:#0A0A0A;line-height:1.4">QR preview unavailable</span>'}
@@ -697,11 +719,14 @@ document.getElementById("dash").addEventListener("click",e=>{
   const a=e.target.closest("[data-ans]");if(a){p.resp[a.dataset.q]=a.dataset.ans;keepOpen();renderDash("checkup");return}
   const j=e.target.closest("[data-jump]");if(j){const q=REQ[j.dataset.jump];S.openCats.add(q.cat);renderDash("checkup");const el=document.getElementById("req-"+q.id);if(el)el.scrollIntoView({block:"center"});return}
   const fl=e.target.closest("[data-flag]");if(fl){const x=REPORTS.find(r=>r.id===+fl.dataset.flag);x.flag=true;toast("Flagged for our team to re-check");renderDash("reports");return}
+  const sch=e.target.closest("[data-sc-chat]");if(sch){SCM.openChat(+sch.dataset.scChat);return}
 });
 function keepOpen(){S.openCats=new Set([...document.querySelectorAll("details.cat[open]")].map(d=>d.dataset.cat))}
 document.getElementById("dash").addEventListener("toggle",e=>{if(e.target.matches&&e.target.matches("details.cat"))keepOpen()},true);
 document.getElementById("dash").addEventListener("change",e=>{
   const rid=S.owner,p=PROF[rid];
+  const sci=e.target.closest("[data-sc]");
+  if(sci&&sci.files[0]){const r=SCM.addPhoto(+sci.dataset.sc,sci.dataset.scItem,sci.files[0]);toast(r&&r.complete?(r.check.status==="answered"?"Spot check answered on time":"Spot check answered late"):"Photo added");renderDash(S.dashTab||"overview");return}
   const up=e.target.closest("[data-up]");
   if(up&&up.files[0]){const f=up.files[0],q=up.dataset.up;
     const type=f.type.startsWith("image/")?"photo":f.type.startsWith("video/")?"video":"document";
@@ -722,7 +747,7 @@ document.getElementById("dash").addEventListener("submit",e=>{
 });
 
 /* ---------- ADMIN ---------- */
-S.adm={q:"",filter:"all",sort:"new",view:"list",sel:null,box:null,anim:false,rejecting:null};
+S.adm={q:"",filter:"all",sort:"new",view:"list",sel:null,box:null,anim:false,rejecting:null,scRejecting:null};
 const svg=(d,extra)=>`<svg class="ad-ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra||""}>${d}</svg>`;
 const ICO={
  ok:svg('<circle cx="8" cy="8" r="6.25"/><path d="m5.4 8.2 1.8 1.8 3.4-3.6"/>'),
@@ -908,6 +933,29 @@ function adEscalationsHTML(urg){
     <h3 class="ad-h3">Sent to the regulator</h3><div class="ad-surface">${sent||adEmpty("No escalations yet","Outlets are escalated automatically when a rule is met.")}</div>
     <h3 class="ad-h3">Watching</h3>${adWatchHTML(urg)}`;
 }
+/* spot checks: demo controls, per-restaurant schedule, review queue */
+const SC_REJECT=["Code not visible or unreadable","Photo doesn't show the requested item","Photo looks older than the spot check","Photo too dark or blurred to judge"];
+const scBadge=c=>{const l=SCM.statusLabel(c),k=l.startsWith("Approved")||l==="Late · approved"?"ok":l==="Rejected"||l==="Missed"?"no":l==="Late"?"more":"pend";return `<span class="ad-badge ad-b-${k}">${l}</span>`};
+function adSpotRow(c){
+  const r=place(c.rid),pend=(c.status==="answered"||c.status==="late")&&!c.review,rej=S.adm.scRejecting===c.id;
+  return `<article class="ad-row ad-row-plain"><div class="ad-row-body">
+    <div class="ad-row-top"><div class="ad-row-id"><h3 class="ad-fn">${esc(r.name)}</h3><div class="ad-meta"><span class="sc-code">${c.code}</span><span>Sent ${SCM.fmtT(c.sent)}</span><span>Due ${SCM.fmtT(c.due)}</span>${c.answeredAt?`<span>Answered ${SCM.fmtT(c.answeredAt)}</span>`:""}</div></div>
+      <div class="ad-badges">${scBadge(c)}${c.flagCode?`<span class="ad-badge ad-b-flag">${ICO.flag}Code not visible</span>`:""}</div></div>
+    <dl class="ad-facts"><div><dt>Items</dt><dd>${c.items.map(i=>esc(SCM.show(i))+(REQ[i].crit?" (critical)":"")).join("<br>")}</dd></div><div><dt>Code</dt><dd>${c.code}</dd></div><div><dt>Photos</dt><dd>${c.photos.length} of ${c.items.length}</dd></div></dl>
+    ${c.photos.length?`<div class="ad-scphotos">${c.photos.map(ph=>`<figure class="ad-scph">${ph.url?`<img src="${ph.url}" alt="Spot-check photo: ${esc(SCM.show(ph.req))}">`:`<div class="ad-pv ad-pv-none">${ICO.img}<span>No preview</span></div>`}<figcaption><b>${esc(SCM.show(ph.req))}</b><span class="ad-lbl-sub" style="margin:0">AI-assisted observation · not a certification</span><ul class="ad-obs-list">${ph.ai.map(adObs).join("")}</ul></figcaption></figure>`).join("")}</div>`:""}
+    ${c.review==="rejected"?`<p class="ad-muted">Rejected: ${esc(c.reason)}</p>`:""}
+    ${rej?`<div class="ad-reason"><label class="ad-select"><span>Reason</span><select id="admScReason">${SC_REJECT.map(o=>`<option>${o}</option>`).join("")}</select></label><button class="ad-btn ad-btn-out" data-scm="cancel" data-scid="${c.id}">Cancel</button><button class="ad-btn ad-btn-danger ad-btn-danger-solid" data-scm="reject-go" data-scid="${c.id}">Reject spot check</button></div>`:""}
+    ${pend?`<div class="ad-acts"><button class="ad-link${c.flagCode?" is-on":""}" data-scm="flag" data-scid="${c.id}">${ICO.flag}Flag “code not visible”</button><span class="ad-acts-main"><button class="ad-btn ad-btn-danger" data-scm="reject" data-scid="${c.id}">Reject with reason</button><button class="ad-btn ad-btn-pri" data-scm="approve" data-scid="${c.id}">Approve</button></span></div>`:""}
+  </div></article>`;
+}
+function adSpotHTML(){
+  const rows=Object.keys(PROF).map(Number).map(rid=>{const open=SCM.openFor(rid),last=SCM.listFor(rid).filter(c=>c.status!=="due").pop();
+    return `<tr><td>${esc(place(rid).name)}</td><td class="ad-td-muted">${SCM.fmtT(SCM.NEXT[rid])}</td><td>${last?`${scBadge(last)} <span class="ad-td-muted">${fmt(new Date(last.sent).toISOString().slice(0,10))}</span>`:"—"}</td><td>${SCM.pausedBadge(rid)?`<span class="ad-badge ad-b-flag">Verification paused</span>`:`<span class="ad-badge">${LV[PROF[rid].level]}</span>`}</td><td><button class="ad-btn ad-btn-out" data-sc-send="${rid}" ${open?"disabled":""}>${open?"Spot check open":"Send spot check now"}</button></td></tr>`}).join("");
+  const checks=[...SCM.SC].sort((a,b)=>b.sent-a.sent).map(adSpotRow).join("");
+  return `<div class="ad-sechead"><p>One spot check per claimed restaurant each week, at a random time between 10:00 and 21:00, with 2 hours to answer. Demo clock: ${SCM.fmtT(RP.now())}.</p><button class="ad-btn ad-btn-out" data-sc-skip>Skip 2 hours (demo)</button></div>
+    <div class="ad-surface ad-tbl"><table><thead><tr><th>Restaurant</th><th>Next scheduled</th><th>Last result</th><th>Badge</th><th><span class="sr-only">Action</span></th></tr></thead><tbody>${rows}</tbody></table></div>
+    <h3 class="ad-h3">All spot checks</h3><div class="ad-surface">${checks||adEmpty("No spot checks yet","Send one from the table above.")}</div>`;
+}
 function renderAdmin(tab){
   if(tab!==S.admTab){S.adm.sel=null;S.adm.box=null}
   const allEv=adQueue();
@@ -915,7 +963,7 @@ function renderAdmin(tab){
   RP.checkActions();
   const pr=REPORTS.filter(x=>x.status==="pending"||(x.flag&&x.status!=="rejected"));
   const urg=RP.urgentOutlets();
-  const tabs=[["verify","Verification requests",vr.length],["evidence","Evidence",allEv.length],["reports","Community reports",pr.length],["escalations","Escalations",urg.length],["scoring","Scoring rules",0],["expiry","Evidence expiry",0],["rules","Escalation rules",0]];
+  const tabs=[["verify","Verification requests",vr.length],["evidence","Evidence",allEv.length],["reports","Community reports",pr.length],["escalations","Escalations",urg.length],["scoring","Scoring rules",0],["expiry","Evidence expiry",0],["rules","Escalation rules",0],["spot","Spot checks",SCM.SC.filter(c=>(c.status==="answered"||c.status==="late")&&!c.review).length]];
   document.getElementById("admSummary").innerHTML=[["Pending",allEv.length+vr.length],["Reports",pr.length],["Expiring soon",adExpiring()]].map(([l,n])=>`<div><dt>${l}</dt><dd>${n}</dd></div>`).join("");
   document.getElementById("atabs").innerHTML=tabs.map(([k,l,n])=>`<button role="tab" data-atab="${k}" aria-selected="${k===tab}">${l}${n?`<span class="ad-count">${n}</span>`:""}</button>`).join("");
   const nm=rid=>esc(place(rid).name);
@@ -943,6 +991,7 @@ function renderAdmin(tab){
     <div class="ad-surface ad-list${A.view==="compact"?" is-compact":""}" id="adList">${adListHTML()}</div>`}
   if(tab==="reports")h=`<div class="ad-surface">${pr.map(adReportRow).join("")||adEmpty("No reports waiting","Every community report has been moderated.")}</div>`;
   if(tab==="escalations")h=adEscalationsHTML(urg);
+  if(tab==="spot")h=adSpotHTML();
   if(tab==="rules")h=`<div class="ad-sechead"><p>Per outlet, only accepted reports with a photo, video or bill, shared with consent, from different numbers count. Changes apply immediately.</p></div>
     <div class="ad-surface ad-tbl"><table><thead><tr><th>Rule</th><th>Setting</th><th>Value</th></tr></thead><tbody>${RP.RULE_FIELDS.map(([g,fs])=>fs.map(([k,l,mn,mx,step],i)=>`<tr><td>${i?"":`<b>${g}</b>`}</td><td class="ad-td-muted">${l}</td><td><input type="number" min="${mn}" max="${mx}" step="${step}" value="${RP.ESC[k]}" data-esc="${k}" aria-label="${esc(g+": "+l)}"></td></tr>`).join("")).join("")}
       <tr><td><b>Weights</b></td><td class="ad-td-muted" colspan="2">Established number 1.0 · New number as set above · Kept private or no photo, video or bill 0</td></tr></tbody></table></div>
@@ -988,6 +1037,15 @@ document.getElementById("adm").addEventListener("click",e=>{
     S.adm.rejecting=null;renderAdmin("reports");return}
   const fa=e.target.closest("[data-fast]");
   if(fa){const rid=+fa.dataset.rid;if(fa.dataset.fast==="confirm"){RP.confirmFast(rid);toast(`Escalated to ${RP.AUTH}`)}else{const n=RP.coordinatedFast(rid);toast(`${n} reports marked as coordinated`)}renderAdmin("escalations");return}
+  const scs=e.target.closest("[data-sc-send]");if(scs){const c=SCM.send(+scs.dataset.scSend);toast(`Spot check ${c.code} sent to ${place(c.rid).name}`);renderAdmin("spot");return}
+  if(e.target.closest("[data-sc-skip]")){RP.advance(2*36e5+60e3);SCM.tick();toast("Demo clock moved forward 2 hours");renderAdmin("spot");return}
+  const scm=e.target.closest("[data-scm]");
+  if(scm){const id=+scm.dataset.scid,a=scm.dataset.scm;
+    if(a==="reject"){S.adm.scRejecting=id;renderAdmin("spot");const sel=document.getElementById("admScReason");if(sel)sel.focus();return}
+    if(a==="reject-go"){SCM.review(id,"reject",document.getElementById("admScReason").value.toLowerCase());toast("Spot check rejected")}
+    if(a==="approve"){SCM.review(id,"approve");toast("Approved · photos added to the kitchen gallery")}
+    if(a==="flag"){SCM.review(id,"flag");toast("Flagged: code not visible")}
+    S.adm.scRejecting=null;renderAdmin("spot");return}
   const sm=e.target.closest("[data-sim]");if(sm){RP.simulateAction(+sm.dataset.sim);toast("Official action recorded (demo)");renderAdmin("escalations");return}
   const op=e.target.closest("[data-open]");if(op){adOpen(+op.dataset.open);return}
   const row=e.target.closest(".ad-row[data-row]");
@@ -1041,13 +1099,13 @@ function initHero(){
 function renderHomeExtras(){
   const id=3,r=D.find(x=>x.id===id),c=cur(r),p=PROF[id],sc=scoreOf(id),ec=evCounts(id);
   /* restaurant dashboard preview */
-  document.getElementById("ckPrev").innerHTML=`<div class="p5-top"><div><div class="p5-k">Restaurant dashboard · sample</div><div class="p5-n">${esc(r.name)}</div></div>${lvl(p.level)}</div>
+  document.getElementById("ckPrev").innerHTML=`<div class="p5-top"><div><div class="p5-k">Restaurant dashboard · sample</div><div class="p5-n">${esc(r.name)}</div></div>${lvlFor(id)}</div>
    <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score">${pubScore(id,sc.overall)}</div>
    <div class="p5-kpis"><div><b>${sc.done}/${sc.tot}</b><span>Requirements met</span></div><div><b>${ec.total}</b><span>Evidence items</span></div><div><b>${sc.missing.length}</b><span>Need attention</span></div></div></div>
    <div class="p5-sec"><div class="p5-k">Needs attention</div><ul class="p5-list">${sc.missing.slice(0,2).map(m=>`<li><span>${esc(m.r.text)}</span><em>${m.why.toUpperCase()}</em></li>`).join("")}</ul></div>
    <div class="p5-sec"><div class="p5-k">Evidence freshness</div><ul class="p5-list">${["kitchen","pest","personal"].map(k=>{const f=fresh(id,k);return `<li><span style="display:flex;gap:10px;align-items:center"><span class="fd fd-${f.st}"></span>${CAT[k].name}</span><em>${f.txt.toUpperCase()}</em></li>`}).join("")}</ul></div>`;
   /* public profile */
-  document.getElementById("pmCard").innerHTML=`<div class="p5-top"><div><div class="p5-k">Food Safety Profile · sample</div><div class="p5-n">${esc(r.name)}</div><div class="muted" style="font-size:13px">${esc(r.area)}, ${esc(r.city)}</div></div>${lvl(p.level)}</div>
+  document.getElementById("pmCard").innerHTML=`<div class="p5-top"><div><div class="p5-k">Food Safety Profile · sample</div><div class="p5-n">${esc(r.name)}</div><div class="muted" style="font-size:13px">${esc(r.area)}, ${esc(r.city)}</div></div>${lvlFor(id)}</div>
    <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score">${pubScore(id,sc.overall)}<dl class="scoremeta"><dt>Evidence</dt><dd>${ec.total} pieces</dd><dt>Last updated</dt><dd>${ec.last?ago(ec.last):"—"}</dd></dl></div>${barsHTML(sc)}</div>
    <div class="p5-sec" style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center"><span class="tag tag-off">Official status</span>${st(c[1])}</div>`;
   document.getElementById("pmOpen").onclick=()=>go("detail",id);
@@ -1174,7 +1232,7 @@ heroCards();initHero();renderHomeExtras();
   function rsDash(active){
     const id=3,r=D.find(x=>x.id===id),p=PROF[id],sc=scoreOf(id),ec=evCounts(id),nrep=REPORTS.filter(x=>x.rid===id&&RP.visibleToRestaurant(x)).length;
     document.getElementById("rsDash").innerHTML=`
-      <div class="p5-top" data-hl="0"><div><div class="p5-k">Restaurant dashboard · sample</div><div class="p5-n">${esc(r.name)}</div><div class="muted" style="font-size:13px">Claimed by owner · ${esc(r.area)}, ${esc(r.city)}</div></div><span data-hl="4">${lvl(p.level)}</span></div>
+      <div class="p5-top" data-hl="0"><div><div class="p5-k">Restaurant dashboard · sample</div><div class="p5-n">${esc(r.name)}</div><div class="muted" style="font-size:13px">Claimed by owner · ${esc(r.area)}, ${esc(r.city)}</div></div><span data-hl="4">${lvlFor(id)}</span></div>
       <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score">${pubScore(id,sc.overall)}</div>
       <div class="p5-kpis"><div data-hl="1"><b>${sc.done}/${sc.tot}</b><span>Requirements complete</span></div><div data-hl="2"><b>${ec.total}</b><span>Evidence submissions</span></div><div data-hl="3"><b>${nrep}</b><span>Community reports</span></div></div></div>`;
     document.querySelectorAll("#rsDash [data-hl]").forEach(el=>el.classList.toggle("hl",+el.dataset.hl===active));
@@ -1189,4 +1247,6 @@ heroCards();initHero();renderHomeExtras();
 
 renderSeg();renderList();syncAuthBtn();
 {const t=parseHash(location.hash);if(t)go(t.p,t.arg,{fromHash:true});else history.replaceState(null,"","#home")}
+/* spot-check deadlines and countdowns run on the shared demo clock */
+setInterval(()=>{SCM.tick();document.querySelectorAll("[data-countdown]").forEach(el=>{el.textContent=SCM.left(+el.dataset.countdown)})},1000);
 }

@@ -28,6 +28,7 @@ npm run preview  # serve the production build
 | Phone + OTP login, account | `src/markup/login.html`, `account.html` |
 | Restaurant claim, dashboard, QR code | `src/markup/restaurants.html`, `dashboard.html` |
 | Admin review queue | `src/markup/admin.html` |
+| Spot checks, kitchen gallery | `src/app/spotcheck.js`, `src/markup/spotcheck.html` |
 | Nav, disclaimer, footer | `src/markup/shell.html`, `footer.html` |
 | All behaviour (routing, data, scoring, demo) | `src/app/platewatch.js` |
 | Styles, in cascade order | `src/styles/` (imported by `index.css`) |
@@ -98,6 +99,27 @@ Moderators (Admin → Community reports) can Accept, Reject with reason, Ask the
 Admin → Escalations lists each escalation (outlet, licence, report IDs, rule, authority, date) with a preview of the email packet (reporter identities withheld; "Demo — not emailed."). Reporters are told when their report is sent, and again when the tracker shows a new official action on that outlet. A demo button records a sample action so this can be seen.
 
 Seeds: Coastal Tiffin Centre is one accepted report short of the standard rule; Spice Route Kitchen is one report short of the fast lane, with mostly new numbers.
+
+## Spot checks and gallery
+
+Logic in `src/app/spotcheck.js`, lightbox markup in `src/markup/spotcheck.html`, styles in `src/styles/spotcheck.css`.
+
+**Refresh schedule.** Evidence expires per category: kitchen, storage, cleaning and operations after 30 days; personal hygiene 60; pest control 90; documents 365. All are editable in Admin → Evidence expiry. The dashboard's "Do these next" card also lists items expiring within 7 days ("Expires in X days"). We don't ask for all 27 items every week: owners would abandon it, and a fixed weekly checklist is easy to stage.
+
+**Weekly spot check.** Each claimed restaurant gets one spot check a week at a random time between 10:00 and 21:00. It is delivered through the WhatsApp bot chat:
+- It asks for 2–3 random checkup items. Critical items are twice as likely, and an item is never repeated from the previous check.
+- Message: "Spot check: show us your [items]. Write this code on paper and keep it visible in every photo: PW-XXXX. You have 2 hours." The 4-digit code is unique per check.
+- The owner answers in the chat or from the dashboard "Spot check due" banner, which has a countdown. Uploads use `accept="image/*" capture="environment"`, so phones open the camera. Each photo gets an AI-assisted observation line, including "Code PW-XXXX visible: needs reviewer confirmation".
+- Statuses: Due → Answered (on time) → Approved / Rejected, or Missed (no answer within 2 hours), or Late (answered after the deadline; counts as missed for the badge).
+- Approved photos become fresh evidence for those items, which resets their expiry.
+- A missed check shows "Missed spot check on [date]" on the public profile. Two misses in a row pause the badge ("Verification paused: missed spot checks") until a spot check is answered on time and approved.
+- Admin → Spot checks lists every check (restaurant, items, code, sent, due, status, photos) with Approve / Reject with reason / Flag "code not visible". Demo controls: "Send spot check now" per restaurant, and "Skip 2 hours", which moves the shared demo clock forward.
+
+**Kitchen gallery** (public profile, restaurant-submitted section). Shows only reviewer-approved photos; rejected and pending photos never appear. Photos are grouped by the 7 checkup areas, latest first, each tagged "Spot check" (solid black) or "Checkup" with its date. A per-area "History" toggle shows older photos. Clicking a photo opens a lightbox: arrows or ← → to move, Esc to close, keyboard accessible. With no approved photos it shows "No kitchen photos yet." The owner's dashboard shows the same gallery under "What diners see".
+
+**Faces.** Photos have a `people` flag. In the prototype, flagged photos get a CSS blur over a fixed demo region and a "Faces blurred" note. **Production must run real face detection and blurring on the server before any photo is published.** The CSS blur here is only a visual placeholder and hides nothing in the actual image file.
+
+Seeds: Green Leaf Dhaba has 8 approved sample photos (generated SVG placeholders labelled "Sample photo") across 4 areas, 2 of them from a spot check 10 days ago, plus a missed spot check 3 weeks ago. Its storage evidence is 25 days old, so "Do these next" shows items expiring in 5 days.
 
 ## Next steps toward production
 1. Replace in-memory data with a backend (restaurants, regulatory_records, requirements, assessment_responses, evidence, verification_requests, community_reports, restaurant_responses, notifications, audit_log).
