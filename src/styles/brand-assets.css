@@ -1,0 +1,14 @@
+/* Canonical brand food image: every hero reference uses --hero */
+:root{--hero:url("../assets/platewatch-food-hero.webp")}
+
+/* ===== V7: transparent bowl hero asset (single source: --hero) ===== */
+.h5-photo{background:transparent;border-radius:0;overflow:visible;will-change:transform;-webkit-mask:var(--hero) center/contain no-repeat;mask:var(--hero) center/contain no-repeat}
+.h5-photo .ph{inset:0;background-size:contain;background-position:center;background-repeat:no-repeat}
+.ab-photo{background-size:contain;background-repeat:no-repeat;background-position:center;border-radius:0}
+@media (prefers-reduced-motion:reduce){.h5-photo{transform:none!important}}
+
+/* ===== V8: PlateWatch logo ===== */
+.logo{gap:8px;align-items:center}
+.logo-mark{height:40px;width:auto;display:block;flex:none;transform:translateY(-8px)}
+.logo span{font-family:"Outfit","Geist",system-ui,sans-serif;font-weight:700;font-size:22px;letter-spacing:-.01em;line-height:1}
+@media (max-width:560px){.logo-mark{height:32px;transform:translateY(-6px)}.logo span{font-size:19px}}

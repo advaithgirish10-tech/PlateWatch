@@ -1,0 +1,29 @@
+<!-- ACCOUNT -->
+<section id="p-account" hidden>
+  <div class="wrap">
+    <div class="pagehead">
+      <div class="eyebrow" id="accPhone"></div>
+      <h1 class="h-big" style="margin-top:12px" id="accHello">Your alerts</h1>
+    </div>
+    <div class="acc">
+      <div>
+        <h2 class="h-mid">Restaurants you follow</h2>
+        <div id="followList" style="margin-top:14px;border-top:1.5px solid var(--ink)"></div>
+      </div>
+      <div>
+        <h2 class="h-mid">Areas you watch</h2>
+        <div id="areaList" style="margin-top:14px;border-top:1.5px solid var(--ink)"></div>
+        <form class="form" id="areaForm" style="margin-top:22px">
+          <label for="newArea">Add an area</label>
+          <input class="input" id="newArea" placeholder="e.g. Bandra West" required>
+          <div><button class="pillbtn out" type="submit">Watch area</button></div>
+        </form>
+        <div style="margin-top:40px;display:flex;gap:16px;flex-wrap:wrap">
+          <button class="x" id="signout">Sign out</button>
+          <button class="x" id="deldata">Delete my data</button>
+        </div>
+        <div id="delconfirm" hidden class="note" style="margin-top:14px">Delete your number and all alerts? <button class="x" id="delyes" style="margin-left:8px;color:var(--ink)">Yes, delete</button> <button class="x" id="delno" style="margin-left:8px">Cancel</button></div>
+      </div>
+    </div>
+  </div>
+</section>

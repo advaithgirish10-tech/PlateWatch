@@ -1,0 +1,120 @@
+<!-- HOME -->
+<section id="p-home">
+  <!-- HERO -->
+  <div class="wrap h5">
+    <div class="h5-left">
+      <div class="eyebrow">Safer plates. Healthier cities.</div>
+      <h1 class="h5-h"><span>Know before</span><span class="o">you eat.</span></h1>
+      <p class="h5-lede">Search any restaurant, café or food outlet and see what is publicly known about its food-safety record.</p>
+      <form class="h5-search" id="homeSearch" role="search">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 15.5 21 21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input id="homeQ" placeholder="Search restaurant, area or FSSAI number" aria-label="Search restaurant, area or FSSAI number" autocomplete="off">
+        <button type="submit" aria-label="Search">→</button>
+      </form>
+      <div class="h5-pop"><span class="lbl">Popular searches</span>
+        <div class="pills"><button data-try="Andheri">Andheri</button><button data-try="Kothrud">Kothrud</button><button data-try="Dosa">Dosa</button><button data-try="Café">Cafés</button><button data-try="Sweet shop">Sweet shops</button></div>
+      </div>
+      <div class="annot a2" aria-hidden="true"><span>But what's behind<br>the kitchen door?</span>
+        <svg viewBox="0 0 110 60"><path d="M4 44 C 34 56, 72 50, 100 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M86 20 L 101 16 L 100 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+    </div>
+
+    <div class="h5-right" id="hxVisual">
+      <div class="annot a1" aria-hidden="true"><span>Great food<br>is a given.</span>
+        <svg viewBox="0 0 70 60"><path d="M50 4 C 60 22, 50 42, 22 52" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M34 44 L 20 53 L 34 58" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <figure class="h5-photo" id="plate">
+        <div class="ph ph-c" role="img" aria-label="A plate of roasted tomatoes and herbs on a creamy base, fading from colour into black and white"></div>
+        <div class="ph ph-g" id="plG"></div>
+        <span class="ph-line" id="plLine"></span>
+        <div class="grain"></div>
+      </figure>
+      <div class="h5-cards" id="hcWrap"></div>
+    </div>
+  </div>
+
+  <!-- STATS -->
+  <div class="wrap h5-stats">
+    <div class="h5-nums" id="numbers"></div>
+  </div>
+
+  <!-- TICKER -->
+  <div class="ticker" aria-label="Recent actions"><div class="tk-label">Recent actions</div><div class="tk-run"><div class="track" id="ticker"></div></div></div>
+
+  <!-- WHY -->
+  <section class="wrap s5">
+    <div class="eyebrow">Why PlateWatch</div>
+    <h2 class="s5-h">Food reviews tell you what people think.<br><span class="g">PlateWatch shows you what's publicly known.</span></h2>
+    <div class="why5">
+      <div><span class="tag tag-off">Government records</span><p>FSSAI licence status and every FDA suspension, notice and reinstatement, with its date and source.</p></div>
+      <span class="plus" aria-hidden="true">+</span>
+      <div><span class="tag tag-self">Restaurant evidence</span><p>Kitchen photos, certificates and logs submitted by the restaurant, dated and checked against 27 requirements.</p></div>
+      <span class="plus" aria-hidden="true">+</span>
+      <div><span class="tag tag-com">Community reports</span><p>What diners saw, moderated before publishing, shown next to the restaurant's reply.</p></div>
+    </div>
+    <p class="s5-foot">Brought together in one place. Never blended into one badge.</p>
+  </section>
+
+  <!-- HOW -->
+  <section class="wrap s5">
+    <div class="eyebrow">How it works</div>
+    <ol class="how5">
+      <li><span class="n">01</span><b>Search</b><p>Find a restaurant, café or food outlet by name, area or licence number.</p></li>
+      <li><span class="n">02</span><b>Check the record</b><p>See regulatory information, compliance history and community reports.</p></li>
+      <li><span class="n">03</span><b>Make your decision</b><p>Understand the evidence and decide for yourself. We don't rate the food.</p></li>
+    </ol>
+  </section>
+
+  <!-- RESTAURANTS -->
+  <section class="wrap s5 split5">
+    <div class="split5-copy">
+      <div class="eyebrow">For restaurants</div>
+      <h2 class="s5-h">Don't just be listed.<br><span class="g">Prove your standards.</span></h2>
+      <p class="s5-p">Restaurants can claim their profile, complete a food-safety assessment, submit evidence, respond to reports and maintain a transparent compliance record.</p>
+      <div class="row-actions"><button class="pillbtn" data-go="biz">For restaurants →</button><button class="textlink" data-go="biz">Claim your restaurant</button></div>
+    </div>
+    <div class="panel5" id="ckPrev"></div>
+  </section>
+
+  <!-- PROFILE -->
+  <section class="wrap s5 split5 rev">
+    <div class="split5-copy">
+      <div class="eyebrow">The Food Safety Profile</div>
+      <h2 class="s5-h">Every restaurant,<br><span class="g">one live record.</span></h2>
+      <p class="s5-p">A score built from dated evidence, the verification level beside it, and official status kept separate. Anyone can check how it's calculated.</p>
+      <div class="row-actions"><button class="pillbtn out" id="pmOpen">Open the sample profile →</button></div>
+    </div>
+    <div class="panel5" id="pmCard"></div>
+  </section>
+
+  <!-- JOURNEY -->
+  <section class="wrap s5">
+    <div class="eyebrow">Compliance journey</div>
+    <h2 class="s5-h">Profiles move.<br><span class="g">So you can see who's improving.</span></h2>
+    <div id="jrChart"></div>
+  </section>
+
+  <!-- COMMUNITY -->
+  <section class="wrap s5 split5">
+    <div class="split5-copy">
+      <div class="eyebrow">Community reporting</div>
+      <h2 class="s5-h">We don't decide<br><span class="g">if a restaurant is good or bad.</span></h2>
+      <p class="s5-p">We show four kinds of information, each labelled, each dated. You read the evidence and make the call.</p>
+      <ul class="src5"><li><span class="tag tag-off">Official information</span></li><li><span class="tag tag-self">Restaurant-submitted evidence</span></li><li><span class="tag tag-plat">Platform verification</span></li><li><span class="tag tag-com">Community reports</span></li></ul>
+      <div class="row-actions"><button class="pillbtn out" data-go="report">How reporting works</button></div>
+    </div>
+    <div class="panel5" id="cmExample"></div>
+  </section>
+
+  <!-- FINAL CTA -->
+  <div class="final">
+    <div class="wrap">
+      <h2 class="final-h">Know before<br><span>you eat.</span></h2>
+      <form class="h5-search dark" id="finalSearch" role="search">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 15.5 21 21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input id="finalQ" placeholder="Search a restaurant" aria-label="Search a restaurant" autocomplete="off">
+        <button type="submit" aria-label="Search">→</button>
+      </form>
+    </div>
+  </div>
+</section>

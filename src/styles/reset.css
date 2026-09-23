@@ -1,0 +1,5 @@
+/* Base reset (replaces the artifact host skeleton the prototype relied on) */
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;font:14px system-ui,-apple-system,"Segoe UI",sans-serif;background:#F6F5F1}
+img{max-width:100%}
+[hidden]{display:none!important}

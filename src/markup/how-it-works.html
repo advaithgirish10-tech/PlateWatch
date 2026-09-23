@@ -1,0 +1,100 @@
+<!-- VERIFY (How it works) -->
+<section id="p-verify" hidden>
+  <div class="wrap g12 hw-hero">
+    <div class="hw-hero-copy">
+      <div class="eyebrow">How PlateWatch works</div>
+      <h1 class="ab-h">From a restaurant name <span class="o">to the full story.</span></h1>
+      <p class="p6">See how PlateWatch brings together official records, restaurant evidence and community reports in one place.</p>
+      <div class="row-actions"><button class="pillbtn" id="toDemo">Try the demo ↓</button></div>
+    </div>
+    <ol class="hw-mini" aria-hidden="true">
+      <li><span class="p5-k">01</span>Search</li><li><span class="p5-k">02</span>Profile</li><li><span class="p5-k">03</span>Record</li><li><span class="p5-k">04</span>Evidence</li><li><span class="p5-k">05</span>Journey</li><li><span class="p5-k">06</span>Report</li><li><span class="p5-k">07</span>Response</li>
+    </ol>
+  </div>
+
+  <!-- DEMO -->
+  <section class="wrap s6" id="demo">
+    <div class="demo-head">
+      <div><div class="eyebrow">Interactive demo</div><h2 class="h6">Let's check a restaurant.</h2></div>
+      <span class="demo-flag">Demo · sample data · nothing is submitted</span>
+    </div>
+    <div class="g12 demo6">
+      <ol class="rail" id="rail" role="tablist" aria-label="Demo steps"></ol>
+      <div class="browser">
+        <div class="br-bar"><span class="br-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="br-url" id="brUrl">platewatch.in</span><span class="br-step" id="brStep">1 / 8</span></div>
+        <div class="br-prog"><i id="brProg"></i></div>
+        <div class="br-body" id="brBody" aria-live="polite"></div>
+        <div class="br-foot"><button class="textlink" id="dmPrev">← Back</button><button class="pillbtn sm" id="dmNext">Next →</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- three layers -->
+  <section class="wrap s6">
+    <div class="eyebrow">Three layers of information</div>
+    <h2 class="h6">Shown separately, <span class="g">so you always know where it came from.</span></h2>
+    <div class="g12 three6">
+      <div><span class="big6">01</span><span class="tag tag-off">Official</span><p>What regulators have recorded.</p></div>
+      <div><span class="big6">02</span><span class="tag tag-self">Restaurant</span><p>What businesses submit and can demonstrate.</p></div>
+      <div><span class="big6">03</span><span class="tag tag-com">Community</span><p>What consumers report.</p></div>
+    </div>
+  </section>
+
+  <!-- trust hierarchy -->
+  <section class="wrap s6 g12 trust6">
+    <div class="trust6-copy">
+      <div class="eyebrow">How we handle trust</div>
+      <h2 class="h6">Not every piece of information carries the same weight.</h2>
+      <p class="p6">This ranks <b>sources of information</b>, not restaurants. A community report is never treated like a regulator's finding, and our verification is never presented as a government certificate.</p>
+      <ul class="rules6">
+        <li><b>Two-source rule.</b> An official action goes live only with an official release, or two independent news reports.</li>
+        <li><b>Twice-daily sweeps.</b> FDA releases and English and Marathi news, at 9 am and 7 pm.</li>
+        <li><b>48-hour corrections.</b> Owners and readers can flag any entry; every change is logged.</li>
+      </ul>
+    </div>
+    <ol class="ladder">
+      <li style="--w:100%"><span class="tag tag-off">Official regulatory record</span><em>Highest authority</em></li>
+      <li style="--w:86%"><span class="tag tag-plat">Platform-verified evidence</span><em>Reviewed by PlateWatch</em></li>
+      <li style="--w:72%"><span class="tag tag-self">Restaurant-submitted evidence</span><em>Self-reported</em></li>
+      <li style="--w:58%"><span class="tag tag-com">Community report</span><em>Moderated observation</em></li>
+    </ol>
+  </section>
+
+  <!-- restaurant side -->
+  <section class="wrap s6 g12 rs6">
+    <div class="rs6-copy">
+      <div class="eyebrow">The restaurant side</div>
+      <h2 class="h6">Restaurants get a side of the story too.</h2>
+      <ol class="rsteps" id="rsteps">
+        <li><button data-rs="0" aria-pressed="true">Claim profile</button></li>
+        <li><button data-rs="1" aria-pressed="false">Complete assessment</button></li>
+        <li><button data-rs="2" aria-pressed="false">Upload evidence</button></li>
+        <li><button data-rs="3" aria-pressed="false">Respond to reports</button></li>
+        <li><button data-rs="4" aria-pressed="false">Request verification</button></li>
+      </ol>
+      <p class="p6" id="rsNote" style="font-size:16px;min-height:3em"></p>
+      <div class="row-actions"><button class="pillbtn" data-go="biz">For restaurants →</button></div>
+    </div>
+    <div class="panel5 rsdash" id="rsDash"></div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="wrap s6 g12 faq6">
+    <div class="faq6-h"><div class="eyebrow">FAQ</div><h2 class="h6">Before you search.</h2></div>
+    <div class="acc6">
+      <details><summary>How often is information updated?</summary><p>Official sources are swept twice a day. Each entry shows the date it was last verified, and anything unconfirmed for 30 days is marked "status unverified".</p></details>
+      <details><summary>What happens when a restaurant disputes a report?</summary><p>The restaurant can respond publicly, upload evidence, or flag the report as incorrect. Our team re-checks flagged reports and can mark them resolved or not substantiated.</p></details>
+      <details><summary>Can restaurants remove complaints?</summary><p>No. Restaurants can respond and provide evidence, but only moderation can change a report's status. Nothing is deleted to make a profile look better.</p></details>
+      <details><summary>What does Platform Verified mean?</summary><p>Our team reviewed the restaurant's submitted evidence against the checkup. It is PlateWatch's own review, not a government certificate.</p></details>
+      <details><summary>Is a PlateWatch score an official government rating?</summary><p>No. The score is our own, calculated from the restaurant's evidence. Official FSSAI hygiene ratings are shown separately, only when one exists.</p></details>
+      <details><summary>What happens to old regulatory actions?</summary><p>They stay in the history with their dates, alongside any reinstatement. The current status always shows the latest official action.</p></details>
+    </div>
+  </section>
+
+  <div class="final">
+    <div class="wrap">
+      <h2 class="final-h">That's<br><span>PlateWatch.</span></h2>
+      <div class="row-actions" style="margin-top:40px"><button class="pillbtn inv" data-go="tracker">Search a restaurant →</button></div>
+    </div>
+  </div>
+</section>
