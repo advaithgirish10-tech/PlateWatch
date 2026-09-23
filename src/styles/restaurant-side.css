@@ -128,18 +128,6 @@ details.cat[open] summary .ch{transform:rotate(45deg)}
 .poster .qrbox{background:#fff;padding:14px;border-radius:14px;line-height:0}
 .poster .qrbox img,.poster .qrbox canvas{display:block}
 .poster .ptitle{font-family:var(--display);font-weight:800;font-stretch:118%;font-size:24px;line-height:1.02;letter-spacing:-.02em}
-/* admin */
-.adm{padding-block:26px 70px}
-.aq{border-top:1.5px solid var(--ink)}
-.ai-item{display:grid;grid-template-columns:1fr auto;gap:12px 20px;padding-block:18px;border-bottom:1px solid var(--rule)}
-.ai-item .acts{display:flex;flex-wrap:wrap;gap:8px;align-items:start;justify-content:flex-end}
+/* admin: see admin.css */
 .sm{font-size:13px;padding:6px 12px}
-@media (max-width:700px){.ai-item{grid-template-columns:1fr}.ai-item .acts{justify-content:flex-start}}
-.tbl{overflow-x:auto;border-top:1.5px solid var(--ink)}
-.tbl table{border-collapse:collapse;width:100%;min-width:560px;font-size:14px}
-.tbl th{text-align:left;font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--grey);font-weight:500;padding:12px 10px 12px 0;border-bottom:1px solid var(--rule)}
-.tbl td{padding:10px 10px 10px 0;border-bottom:1px solid var(--rule);vertical-align:middle}
-.tbl input[type=number]{width:70px;border:1.5px solid var(--rule);border-radius:10px;padding:6px 8px;font:inherit;font-family:var(--mono);background:var(--paper);color:var(--ink)}
-.tbl input[type=number]:focus{outline:0;border-color:var(--ink)}
-.empty2{padding-block:26px;color:var(--grey)}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:12px 20px;border-radius:999px;font-size:14px;z-index:50;max-width:calc(100% - 32px);text-align:center}

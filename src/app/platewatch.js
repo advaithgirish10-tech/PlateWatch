@@ -45,6 +45,7 @@ function go(p,arg){
   if(p==="biz"&&S.owner!=null&&arg==null){p="dash";arg="overview"}
   pages.forEach(x=>document.getElementById("p-"+x).hidden=x!==p);
   document.querySelectorAll(".links .l").forEach(b=>b.setAttribute("aria-current",b.dataset.go===p||(p==="dash"&&b.dataset.go==="biz")?"page":"false"));
+  if(p!=="admin")document.documentElement.classList.remove("ad-lock");
   document.getElementById("drawer").hidden=true;document.getElementById("menuBtn").setAttribute("aria-expanded","false");
   if(p==="detail")renderDetail(arg);
   if(p==="login")renderAuth("phone");
@@ -601,28 +602,205 @@ document.getElementById("dash").addEventListener("submit",e=>{
 });
 
 /* ---------- ADMIN ---------- */
+S.adm={q:"",filter:"all",sort:"new",view:"list",sel:null,box:null,anim:false};
+const svg=(d,extra)=>`<svg class="ad-ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra||""}>${d}</svg>`;
+const ICO={
+ ok:svg('<circle cx="8" cy="8" r="6.25"/><path d="m5.4 8.2 1.8 1.8 3.4-3.6"/>'),
+ warn:svg('<path d="M8 2.2 14.3 13H1.7Z"/><path d="M8 6.4v3"/><path d="M8 11.4v.1"/>'),
+ info:svg('<circle cx="8" cy="8" r="6.25"/><path d="M8 7.2v3.6"/><path d="M8 5.2v.1"/>'),
+ flag:svg('<path d="M3.5 14V2.5"/><path d="M3.5 3h8.2l-1.6 3 1.6 3H3.5"/>'),
+ img:svg('<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><circle cx="5.8" cy="6.2" r="1.2"/><path d="m2.5 12 3.6-3.4 2.4 2.2 2.2-1.9 2.8 2.6"/>'),
+ doc:svg('<path d="M4 1.8h5.2L12.5 5v9.2H4Z"/><path d="M9 1.8V5h3.5"/><path d="M6 8.4h4.5M6 10.8h4.5"/>'),
+ x:svg('<path d="m4 4 8 8M12 4l-8 8"/>'),
+ search:svg('<circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.3 3.3"/>'),
+ expand:svg('<path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9"/>')};
+const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
+const EVST={submitted:["Pending review","pend"],more:["More requested","more"],verified:["Approved","ok"],rejected:["Rejected","no"]};
+const adBadge=e=>`<span class="ad-badge ad-b-${EVST[e.status][1]}">${EVST[e.status][0]}</span>${e.flag?`<span class="ad-badge ad-b-flag">${ICO.flag}Flagged</span>`:""}`;
+const adObs=o=>{const k=o[0]==="✓"?"ok":o[0]==="⚠"?"warn":"info";return `<li class="ad-obs ad-obs-${k}">${ICO[k]}<span>${esc(k==="info"?o:o.slice(1).trim())}</span></li>`};
+const adEmpty=(h,p,extra)=>`<div class="ad-empty"><span class="ad-empty-mark" aria-hidden="true">${ICO.ok}</span><h3>${h}</h3><p>${p}</p>${extra||""}</div>`;
+const place=rid=>D.find(x=>x.id===rid);
+/* every evidence item still waiting on a reviewer */
+function adQueue(){const out=[];Object.entries(PROF).forEach(([rid,p])=>Object.entries(p.ev).forEach(([q,list])=>list.forEach(e=>{if(e.status==="submitted"||e.status==="more")out.push({rid:+rid,q,e})})));return out}
+function adFind(id){for(const [rid,p] of Object.entries(PROF))for(const [q,list] of Object.entries(p.ev)){const e=list.find(y=>y.id===id);if(e)return {rid:+rid,q,e}}return null}
+function adExpiring(){let n=0;Object.values(PROF).forEach(p=>Object.entries(p.ev).forEach(([q,list])=>list.forEach(e=>{if(e.status==="rejected")return;const left=CAT[REQ[q].cat].expiry-daysAgo(e.date);if(left>=0&&left<=7)n++})));return n}
+function adItems(){
+  const A=S.adm,s=A.q.trim().toLowerCase();
+  const pri=x=>(REQ[x.q].crit?100:0)+REQ[x.q].w*10+(x.e.flag?5:0)+(x.e.status==="more"?3:0);
+  return adQueue().filter(({rid,q,e})=>{const r=place(rid);
+    if(s&&!(e.name+" "+r.name+" "+r.area+" "+r.city+" "+REQ[q].text+" "+CAT[REQ[q].cat].name).toLowerCase().includes(s))return false;
+    if(A.filter==="pending")return e.status==="submitted";
+    if(A.filter==="flagged")return !!e.flag;
+    if(A.filter==="recent")return daysAgo(e.date)<=3;
+    return true;
+  }).sort(A.sort==="old"?(a,b)=>a.e.date.localeCompare(b.e.date)||a.e.id-b.e.id
+    :A.sort==="pri"?(a,b)=>pri(b)-pri(a)||a.e.date.localeCompare(b.e.date)
+    :(a,b)=>b.e.date.localeCompare(a.e.date)||b.e.id-a.e.id);
+}
+function adPreview(e,big){
+  const cls="ad-pv"+(big?" ad-pv-lg":"");
+  if(e.url)return `<button class="${cls}" data-box="${e.id}" aria-label="Open larger preview of ${esc(e.name)}"><img src="${e.url}" alt="" onload="this.parentNode.classList.add('ld')" onerror="this.parentNode.classList.add('ld')"><span class="ad-pv-zoom">${ICO.expand}</span></button>`;
+  return `<${big?"div":`button data-open="${e.id}" aria-label="Open details for ${esc(e.name)}"`} class="${cls} ad-pv-none">${e.type==="photo"?ICO.img:ICO.doc}<span>No preview</span><em>${e.type}</em></${big?"div":"button"}>`;
+}
+function adEvActs(e){return `<button class="ad-link${e.flag?" is-on":""}" data-e="flag" data-eid="${e.id}" aria-pressed="${!!e.flag}">${ICO.flag}${e.flag?"Flagged":"Flag"}</button>
+  <span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-e="more" data-eid="${e.id}">Request more evidence</button><button class="ad-btn ad-btn-danger" data-e="rejected" data-eid="${e.id}">Reject</button><button class="ad-btn ad-btn-pri" data-e="verified" data-eid="${e.id}">Approve</button></span>`}
+function adEvRow({rid,q,e}){const r=place(rid),p=PROF[rid],req=REQ[q];
+  return `<article class="ad-row${S.adm.sel===e.id?" is-sel":""}" data-row="${e.id}">
+    <div class="ad-row-media">${adPreview(e)}</div>
+    <div class="ad-row-body">
+      <div class="ad-row-top">
+        <div class="ad-row-id">
+          <h3 class="ad-fn"><button data-open="${e.id}">${esc(e.name)}</button></h3>
+          <div class="ad-meta"><span class="ad-meta-strong">${esc(r.name)}</span><span>${esc(r.area)}, ${esc(r.city)}</span><span>${CAT[req.cat].name}</span><span>Submitted ${ago(e.date)}</span></div>
+        </div>
+        <div class="ad-badges">${adBadge(e)}</div>
+      </div>
+      <div class="ad-row-grid">
+        <section class="ad-sec" aria-label="Evidence details">
+          <h4 class="ad-lbl">Evidence details</h4>
+          <dl class="ad-dl">
+            <div class="ad-dl-wide"><dt>Description</dt><dd>${esc(req.text)}${req.crit?` <span class="ad-crit">Critical</span>`:""}</dd></div>
+            <div><dt>Evidence type</dt><dd>${cap(e.type)}</dd></div>
+            <div><dt>Submitted by</dt><dd>Owner · +91 ${esc(p.owner)}</dd></div>
+            <div><dt>Submitted date</dt><dd>${fmt(e.date)}</dd></div>
+            <div><dt>Verification status</dt><dd>${LV[p.level]}</dd></div>
+          </dl>
+          ${e.note?`<p class="ad-note"><span class="ad-lbl">Owner's note</span>${esc(e.note)}</p>`:""}
+        </section>
+        <section class="ad-sec" aria-label="AI observations">
+          <h4 class="ad-lbl">AI observations <span class="ad-lbl-sub">Assistive · not a certification</span></h4>
+          ${e.ai?`<ul class="ad-obs-list">${e.ai.map(adObs).join("")}</ul>`:`<p class="ad-muted">No automated checks for ${e.type}s. Review the file manually.</p>`}
+        </section>
+      </div>
+      <div class="ad-acts">${adEvActs(e)}</div>
+    </div>
+  </article>`}
+function adListHTML(){
+  const all=adQueue().length,list=adItems();
+  if(!all)return adEmpty("No evidence waiting for review","Everything is currently up to date.");
+  if(!list.length)return adEmpty("No evidence matches these filters","Try a different search or filter.",`<button class="ad-btn ad-btn-out" data-clear>Clear filters</button>`);
+  return list.map(adEvRow).join("");
+}
+function adDrawList(){
+  const n=adItems().length;
+  document.getElementById("adList").innerHTML=adListHTML();
+  document.getElementById("admCount").textContent=`${n} ${n===1?"item":"items"}`;
+}
+function adPanelHTML(){
+  const it=S.adm.sel==null?null:adFind(S.adm.sel);if(!it)return "";
+  const {rid,q,e}=it,r=place(rid),p=PROF[rid],req=REQ[q],c=CAT[req.cat],sc=scoreOf(rid);
+  const until=new Date(e.date);until.setDate(until.getDate()+c.expiry);
+  const prev=(p.ev[q]||[]).filter(x=>x.id!==e.id).sort((a,b)=>b.date.localeCompare(a.date));
+  const waiting=e.status==="submitted"||e.status==="more";
+  return `<div class="ad-scrim${S.adm.anim?" in":""}" data-close="panel"></div>
+  <aside class="ad-panel${S.adm.anim?" in":""}" role="dialog" aria-modal="true" aria-labelledby="adPanelTitle">
+    <div class="ad-panel-head">
+      <div><div class="ad-lbl">Evidence · ${esc(r.name)}</div><h2 id="adPanelTitle" class="ad-panel-title">${esc(e.name)}</h2><div class="ad-badges">${adBadge(e)}</div></div>
+      <button class="ad-iconbtn" data-close="panel" aria-label="Close panel" id="adPanelClose">${ICO.x}</button>
+    </div>
+    <div class="ad-panel-body">
+      ${adPreview(e,true)}
+      <section class="ad-psec"><h4 class="ad-lbl">Metadata</h4>
+        <dl class="ad-kv">
+          <dt>Restaurant</dt><dd>${esc(r.name)}</dd>
+          <dt>Location</dt><dd>${esc(r.area)}, ${esc(r.city)}</dd>
+          <dt>Category</dt><dd>${c.name}</dd>
+          <dt>Requirement</dt><dd>${esc(req.text)}${req.crit?` <span class="ad-crit">Critical</span>`:""}</dd>
+          <dt>Weight</dt><dd>${req.w} of 5</dd>
+          <dt>Evidence type</dt><dd>${cap(e.type)}</dd>
+          <dt>Submitted by</dt><dd>Owner · +91 ${esc(p.owner)}</dd>
+          <dt>Submitted</dt><dd>${fmt(e.date)} · ${ago(e.date)}</dd>
+          <dt>Valid until</dt><dd>${fmt(until.toISOString().slice(0,10))} · ${c.expiry}-day window</dd>
+          <dt>Verification</dt><dd>${LV[p.level]}</dd>
+          <dt>Current score</dt><dd>${sc.overall}/100 · ${sc.done}/${sc.tot} met</dd>
+        </dl>
+      </section>
+      <section class="ad-psec"><h4 class="ad-lbl">AI observations <span class="ad-lbl-sub">Assistive · not a certification</span></h4>
+        ${e.ai?`<ul class="ad-obs-list">${e.ai.map(adObs).join("")}</ul>`:`<p class="ad-muted">No automated checks for ${e.type}s.</p>`}
+      </section>
+      <section class="ad-psec"><h4 class="ad-lbl">Previous submissions <span class="ad-lbl-sub">Same requirement</span></h4>
+        ${prev.length?`<ul class="ad-hist">${prev.map(x=>`<li><span class="ad-hist-n">${esc(x.name)}</span><span class="ad-hist-d">${fmt(x.date)}</span>${adBadge(x)}</li>`).join("")}</ul>`:`<p class="ad-muted">First submission for this requirement.</p>`}
+      </section>
+      <section class="ad-psec"><h4 class="ad-lbl">Reviewer notes</h4>
+        ${e.note?`<p class="ad-note"><span class="ad-lbl">Owner's note</span>${esc(e.note)}</p>`:""}
+        <textarea class="ad-textarea" rows="3" data-rnote="${e.id}" placeholder="Internal note for other reviewers" aria-label="Reviewer note">${esc(e.reviewNote||"")}</textarea>
+        <p class="ad-hint">Internal only. Not shown to the restaurant.</p>
+      </section>
+    </div>
+    ${waiting?`<div class="ad-panel-foot ad-acts">${adEvActs(e)}</div>`:""}
+  </aside>`;
+}
+function adBoxHTML(){
+  const it=S.adm.box==null?null:adFind(S.adm.box);if(!it||!it.e.url)return "";
+  const r=place(it.rid);
+  return `<div class="ad-lb" role="dialog" aria-modal="true" aria-label="Evidence preview" data-close="box">
+    <figure><img src="${it.e.url}" alt="${esc(it.e.name)}"><figcaption><span>${esc(it.e.name)}</span><span>${esc(r.name)} · ${fmt(it.e.date)}</span></figcaption></figure>
+    <button class="ad-iconbtn ad-lb-x" data-close="box" aria-label="Close preview" id="adBoxClose">${ICO.x}</button>
+  </div>`;
+}
+function adOverlays(){
+  const el=document.getElementById("admOverlay");if(!el)return;
+  el.innerHTML=adPanelHTML()+adBoxHTML();
+  document.documentElement.classList.toggle("ad-lock",!!el.innerHTML);
+  S.adm.anim=false;
+}
 function renderAdmin(tab){
-  const allEv=[];Object.entries(PROF).forEach(([rid,p])=>Object.entries(p.ev).forEach(([q,list])=>list.forEach(e=>{if(e.status==="submitted"||e.status==="more")allEv.push({rid:+rid,q,e})})));
+  if(tab!==S.admTab){S.adm.sel=null;S.adm.box=null}
+  const allEv=adQueue();
   const vr=Object.entries(PROF).filter(([,p])=>p.level==="pending");
   const pr=REPORTS.filter(x=>x.status==="pending"||x.status==="review"||x.flag);
   const tabs=[["verify","Verification requests",vr.length],["evidence","Evidence",allEv.length],["reports","Community reports",pr.length],["scoring","Scoring rules",0],["expiry","Evidence expiry",0]];
-  document.getElementById("atabs").innerHTML=tabs.map(([k,l,n])=>`<button role="tab" data-atab="${k}" aria-selected="${k===tab}">${l}${n?`<span class="n">${n}</span>`:""}</button>`).join("");
-  const nm=rid=>esc(D.find(x=>x.id===rid).name);
+  document.getElementById("admSummary").innerHTML=[["Pending",allEv.length+vr.length],["Reports",pr.length],["Expiring soon",adExpiring()]].map(([l,n])=>`<div><dt>${l}</dt><dd>${n}</dd></div>`).join("");
+  document.getElementById("atabs").innerHTML=tabs.map(([k,l,n])=>`<button role="tab" data-atab="${k}" aria-selected="${k===tab}">${l}${n?`<span class="ad-count">${n}</span>`:""}</button>`).join("");
+  const nm=rid=>esc(place(rid).name);
+  const liveCheck=`<p class="ad-live"><span class="ad-lbl">Live check</span>Green Leaf Dhaba <b>${scoreOf(3).overall}/100</b><span aria-hidden="true">·</span>Bandra Bao Co. <b>${scoreOf(13).overall}/100</b></p>`;
   let h="";
-  if(tab==="verify")h=`<div class="aq">${vr.map(([rid,p])=>{const sc=scoreOf(+rid);return `<div class="ai-item"><div><b style="font-family:var(--display);font-size:20px">${nm(+rid)}</b><div class="muted">Score ${sc.overall}/100 · ${sc.done}/${sc.tot} met · ${evCounts(+rid).total} evidence items${sc.crit.length?" · <b style='color:var(--ink)'>"+sc.crit.length+" critical open</b>":""}</div></div>
-    <div class="acts"><button class="pillbtn sm" data-v="approve" data-rid="${rid}">Approve</button><button class="pillbtn out sm" data-v="more" data-rid="${rid}">Request more evidence</button><button class="pillbtn out sm" data-v="reject" data-rid="${rid}">Reject</button></div></div>`}).join("")||`<p class="empty2">No pending requests. Claim Bandra Bao Co. as an owner and tap "Request verification" to see one here.</p>`}</div>`;
-  if(tab==="evidence")h=`<div class="aq">${allEv.map(({rid,q,e})=>`<div class="ai-item"><div style="display:grid;grid-template-columns:64px 1fr;gap:14px"><div class="ev" style="padding:0;background:none;display:block"><div class="th">${e.url?`<img src="${e.url}" alt="">`:e.type.toUpperCase()}</div></div><div><b>${esc(e.name)}</b><div class="muted" style="font-size:13px">${nm(rid)} · ${esc(REQ[q].text)}${REQ[q].crit?" · Critical":""} · ${ago(e.date)}${e.status==="more"?" · more requested":""}</div>${e.ai?`<div class="ai" style="margin-top:6px">${e.ai.map(o=>`<div>${esc(o)}</div>`).join("")}</div>`:""}</div></div>
-    <div class="acts"><button class="pillbtn sm" data-e="verified" data-eid="${e.id}">Approve</button><button class="pillbtn out sm" data-e="more" data-eid="${e.id}">Request more</button><button class="pillbtn out sm" data-e="rejected" data-eid="${e.id}">Reject</button><button class="x" data-e="flag" data-eid="${e.id}">${e.flag?"Flagged":"Flag"}</button></div></div>`).join("")||`<p class="empty2">No evidence waiting for review.</p>`}</div>`;
-  if(tab==="reports")h=`<div class="aq">${pr.map(x=>`<div class="ai-item"><div><div class="rep" style="border:0;padding:0"><div class="top">${rsPill(x.status)}<span>${nm(x.rid)}</span><span>${fmt(x.date)}</span>${x.photo?"<span>Photo</span>":""}${x.flag?"<b style='color:var(--ink)'>Restaurant flagged as incorrect</b>":""}</div><p>${esc(x.text)}</p>${x.response?`<div class="resp"><span class="tag tag-self">Restaurant response</span>${esc(x.response.text)}</div>`:""}</div></div>
-    <div class="acts">${x.status==="pending"?`<button class="pillbtn sm" data-r="review" data-rid2="${x.id}">Publish as under review</button>`:""}<button class="pillbtn out sm" data-r="verified" data-rid2="${x.id}">Mark verified</button><button class="pillbtn out sm" data-r="resolved" data-rid2="${x.id}">Mark resolved</button><button class="x" data-r="dismissed" data-rid2="${x.id}">Not substantiated</button></div></div>`).join("")||`<p class="empty2">No reports waiting.</p>`}</div>`;
-  if(tab==="scoring")h=`<p class="muted" style="margin-top:0">Weights and critical flags apply to every restaurant instantly. Score = weighted met ÷ weighted applicable.</p><div class="tbl"><table><thead><tr><th>Requirement</th><th>Category</th><th>Weight</th><th>Critical</th></tr></thead><tbody>${REQS.map(q=>`<tr><td>${esc(q.text)}</td><td>${CAT[q.cat].name}</td><td><input type="number" min="1" max="5" value="${q.w}" data-w="${q.id}" aria-label="Weight"></td><td><input type="checkbox" ${q.crit?"checked":""} data-c="${q.id}" aria-label="Critical" style="width:18px;height:18px;accent-color:#0A0A0A"></td></tr>`).join("")}</tbody></table></div>
-    <p class="muted" style="margin-top:16px">Live check: Green Leaf Dhaba ${scoreOf(3).overall}/100 · Bandra Bao Co. ${scoreOf(13).overall}/100</p>`;
-  if(tab==="expiry")h=`<p class="muted" style="margin-top:0">How long evidence stays valid before it stops counting towards the score.</p><div class="tbl"><table><thead><tr><th>Category</th><th>Valid for (days)</th></tr></thead><tbody>${CATS.map(c=>`<tr><td>${c.name}</td><td><input type="number" min="1" max="730" value="${c.expiry}" data-x="${c.k}" aria-label="Days"></td></tr>`).join("")}</tbody></table></div>
-    <p class="muted" style="margin-top:16px">Live check: Green Leaf Dhaba ${scoreOf(3).overall}/100 · Bandra Bao Co. ${scoreOf(13).overall}/100</p>`;
-  document.getElementById("adm").innerHTML=h;S.admTab=tab;
+  if(tab==="verify")h=`<div class="ad-surface">${vr.map(([rid,p])=>{const sc=scoreOf(+rid),r=place(+rid);return `<article class="ad-row ad-row-plain">
+    <div class="ad-row-body">
+      <div class="ad-row-top">
+        <div class="ad-row-id"><h3 class="ad-fn">${nm(+rid)}</h3><div class="ad-meta"><span>${esc(r.area)}, ${esc(r.city)}</span><span>${esc(r.cat)}</span><span>Owner · +91 ${esc(p.owner)}</span>${p.reqOn?`<span>Requested ${ago(p.reqOn)}</span>`:""}</div></div>
+        <div class="ad-badges"><span class="ad-badge ad-b-pend">Verification requested</span></div>
+      </div>
+      <dl class="ad-stats"><div><dt>Score</dt><dd>${sc.overall}<small>/100</small></dd></div><div><dt>Requirements met</dt><dd>${sc.done}<small>/${sc.tot}</small></dd></div><div><dt>Evidence items</dt><dd>${evCounts(+rid).total}</dd></div><div><dt>Critical open</dt><dd class="${sc.crit.length?"is-bad":""}">${sc.crit.length}</dd></div></dl>
+      ${sc.crit.length?`<ul class="ad-obs-list">${sc.crit.map(q=>`<li class="ad-obs ad-obs-warn">${ICO.warn}<span>${esc(q.text)}</span></li>`).join("")}</ul>`:""}
+      <div class="ad-acts"><span></span><span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-v="more" data-rid="${rid}">Request more evidence</button><button class="ad-btn ad-btn-danger" data-v="reject" data-rid="${rid}">Reject</button><button class="ad-btn ad-btn-pri" data-v="approve" data-rid="${rid}">Approve</button></span></div>
+    </div></article>`}).join("")||adEmpty("No pending verification requests","Claim Bandra Bao Co. as an owner and tap “Request verification” to see one here.")}</div>`;
+  if(tab==="evidence"){const A=S.adm,n=adItems().length;
+    h=`<div class="ad-toolbar">
+      <label class="ad-search">${ICO.search}<input id="admQ" type="search" placeholder="Search evidence…" value="${esc(A.q)}" aria-label="Search evidence" autocomplete="off"></label>
+      <div class="ad-seg" role="group" aria-label="Filter">${[["all","All"],["pending","Pending"],["flagged","Flagged"],["recent","Recently submitted"]].map(([k,l])=>`<button data-af="${k}" aria-pressed="${A.filter===k}">${l}</button>`).join("")}</div>
+      <label class="ad-select"><span>Sort</span><select id="admSort">${[["new","Newest"],["old","Oldest"],["pri","Highest priority"]].map(([k,l])=>`<option value="${k}" ${A.sort===k?"selected":""}>${l}</option>`).join("")}</select></label>
+      <div class="ad-seg ad-seg-view" role="group" aria-label="View">${[["list","List"],["compact","Compact"]].map(([k,l])=>`<button data-av="${k}" aria-pressed="${A.view===k}">${l}</button>`).join("")}</div>
+    </div>
+    <div class="ad-listhead"><span id="admCount">${n} ${n===1?"item":"items"}</span><span>Select an item to open the review panel</span></div>
+    <div class="ad-surface ad-list${A.view==="compact"?" is-compact":""}" id="adList">${adListHTML()}</div>`}
+  if(tab==="reports")h=`<div class="ad-surface">${pr.map(x=>{const r=place(x.rid);return `<article class="ad-row ad-row-plain">
+    <div class="ad-row-body">
+      <div class="ad-row-top">
+        <div class="ad-row-id"><h3 class="ad-fn">${nm(x.rid)}</h3><div class="ad-meta"><span>${esc(r.area)}, ${esc(r.city)}</span><span>Visited ${fmt(x.date)}</span>${x.photo?"<span>Photo attached</span>":""}</div></div>
+        <div class="ad-badges">${rsPill(x.status)}${x.flag?`<span class="ad-badge ad-b-flag">${ICO.flag}Restaurant flagged as incorrect</span>`:""}</div>
+      </div>
+      <blockquote class="ad-quote">${esc(x.text)}</blockquote>
+      ${x.response?`<div class="ad-note"><span class="ad-lbl">Restaurant response</span>${esc(x.response.text)}</div>`:""}
+      <div class="ad-acts"><button class="ad-link" data-r="dismissed" data-rid2="${x.id}">Not substantiated</button><span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-r="resolved" data-rid2="${x.id}">Mark resolved</button><button class="ad-btn ${x.status==="pending"?"ad-btn-out":"ad-btn-pri"}" data-r="verified" data-rid2="${x.id}">Mark verified</button>${x.status==="pending"?`<button class="ad-btn ad-btn-pri" data-r="review" data-rid2="${x.id}">Publish as under review</button>`:""}</span></div>
+    </div></article>`}).join("")||adEmpty("No reports waiting","Every community report has been moderated.")}</div>`;
+  if(tab==="scoring")h=`<div class="ad-sechead"><p>Weights and critical flags apply to every restaurant instantly. Score = weighted met ÷ weighted applicable.</p>${liveCheck}</div>
+    <div class="ad-surface ad-tbl"><table><thead><tr><th>Requirement</th><th>Category</th><th>Weight</th><th>Critical</th></tr></thead><tbody>${REQS.map(q=>`<tr><td>${esc(q.text)}</td><td class="ad-td-muted">${CAT[q.cat].name}</td><td><input type="number" min="1" max="5" value="${q.w}" data-w="${q.id}" aria-label="Weight"></td><td><input type="checkbox" ${q.crit?"checked":""} data-c="${q.id}" aria-label="Critical"></td></tr>`).join("")}</tbody></table></div>`;
+  if(tab==="expiry")h=`<div class="ad-sechead"><p>How long evidence stays valid before it stops counting towards the score.</p>${liveCheck}</div>
+    <div class="ad-surface ad-tbl"><table><thead><tr><th>Category</th><th>Valid for (days)</th></tr></thead><tbody>${CATS.map(c=>`<tr><td>${c.name}</td><td><input type="number" min="1" max="730" value="${c.expiry}" data-x="${c.k}" aria-label="Days"></td></tr>`).join("")}</tbody></table></div>`;
+  document.getElementById("adm").innerHTML=`<div class="ad-pane" role="tabpanel">${h}</div><div id="admOverlay"></div>`;S.admTab=tab;
+  adOverlays();
 }
+function adOpen(id){S.adm.sel=id;S.adm.anim=true;renderAdmin("evidence");const b=document.getElementById("adPanelClose");if(b)b.focus()}
+function adClose(which){if(which==="box")S.adm.box=null;else S.adm.sel=null;adOverlays();if(which==="panel")document.querySelectorAll("#adList .ad-row.is-sel").forEach(x=>x.classList.remove("is-sel"))}
 document.getElementById("atabs").onclick=e=>{const b=e.target.closest("[data-atab]");if(b)renderAdmin(b.dataset.atab)};
 document.getElementById("adm").addEventListener("click",e=>{
+  const cl=e.target.closest("[data-close]");
+  if(cl){if(cl.dataset.close==="box"&&e.target.closest("figure"))return;adClose(cl.dataset.close);return}
+  const bx=e.target.closest("[data-box]");if(bx){S.adm.box=+bx.dataset.box;adOverlays();const b=document.getElementById("adBoxClose");if(b)b.focus();return}
+  const af=e.target.closest("[data-af]");if(af){S.adm.filter=af.dataset.af;renderAdmin("evidence");return}
+  const av=e.target.closest("[data-av]");if(av){S.adm.view=av.dataset.av;renderAdmin("evidence");return}
+  if(e.target.closest("[data-clear]")){S.adm.q="";S.adm.filter="all";renderAdmin("evidence");return}
   const v=e.target.closest("[data-v]");
   if(v){const p=PROF[+v.dataset.rid];const a=v.dataset.v;
     if(a==="approve"){p.level="platform";p.verifiedOn=TODAY.toISOString().slice(0,10);p.adminNote="";Object.values(p.ev).flat().forEach(x=>{if(x.status==="submitted")x.status="verified"});toast("Approved. Now Platform verified.")}
@@ -631,15 +809,31 @@ document.getElementById("adm").addEventListener("click",e=>{
     renderAdmin("verify");return}
   const ev=e.target.closest("[data-e]");
   if(ev){const id=+ev.dataset.eid;const x=Object.values(PROF).flatMap(p=>Object.values(p.ev).flat()).find(y=>y.id===id);
-    if(ev.dataset.e==="flag")x.flag=!x.flag;else x.status=ev.dataset.e;toast("Evidence updated");renderAdmin("evidence");return}
+    /* with the panel open, a decision moves it on to the next item in the current list */
+    const before=S.adm.sel===id?adItems().map(y=>y.e.id):null;
+    if(ev.dataset.e==="flag")x.flag=!x.flag;else x.status=ev.dataset.e;toast("Evidence updated");
+    if(before&&ev.dataset.e!=="flag"){const after=new Set(adItems().map(y=>y.e.id));const i=before.indexOf(id);S.adm.sel=before.slice(i+1).concat(before.slice(0,i).reverse()).find(y=>after.has(y))??null}
+    renderAdmin("evidence");return}
   const r=e.target.closest("[data-r]");
-  if(r){const x=REPORTS.find(y=>y.id===+r.dataset.rid2);x.status=r.dataset.r;x.flag=false;toast("Report: "+RS[x.status]);renderAdmin("reports")}
+  if(r){const x=REPORTS.find(y=>y.id===+r.dataset.rid2);x.status=r.dataset.r;x.flag=false;toast("Report: "+RS[x.status]);renderAdmin("reports");return}
+  const op=e.target.closest("[data-open]");if(op){adOpen(+op.dataset.open);return}
+  const row=e.target.closest(".ad-row[data-row]");
+  if(row&&!e.target.closest("button,a,input,select,textarea,label")&&!getSelection().toString())adOpen(+row.dataset.row);
+});
+document.getElementById("adm").addEventListener("input",e=>{
+  if(e.target.id==="admQ"){S.adm.q=e.target.value;adDrawList();return}
+  const n=e.target.dataset.rnote;if(n){const it=adFind(+n);if(it)it.e.reviewNote=e.target.value}
 });
 document.getElementById("adm").addEventListener("change",e=>{
+  if(e.target.id==="admSort"){S.adm.sort=e.target.value;adDrawList();return}
   const w=e.target.dataset.w,c=e.target.dataset.c,x=e.target.dataset.x;
   if(w){REQ[w].w=Math.max(1,Math.min(5,+e.target.value||1));renderAdmin("scoring")}
   if(c){REQ[c].crit=e.target.checked;renderAdmin("scoring")}
   if(x){CAT[x].expiry=Math.max(1,+e.target.value||1);renderAdmin("expiry")}
+});
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Escape"||document.getElementById("p-admin").hidden)return;
+  if(S.adm.box!=null)adClose("box");else if(S.adm.sel!=null)adClose("panel");
 });
 
 /* ================= V5 HOME ================= */
