@@ -20,7 +20,7 @@ npm run preview  # serve the production build
 | Area | Where |
 |---|---|
 | Homepage (hero, stats, ticker, sections) | `src/markup/home.html` |
-| Tracker search and results | `src/markup/tracker.html` |
+| Tracker (map-first: search, filters, map, results panel) | `src/markup/tracker.html`, logic in `src/app/map.js` |
 | Public restaurant profile | `src/markup/profile.html` |
 | Report a problem (WhatsApp entry) | `src/markup/report.html`, chat in `src/markup/bot.html`, logic in `src/app/bot.js` |
 | How it works (interactive demo) | `src/markup/how-it-works.html` |
@@ -55,7 +55,7 @@ Notes:
 User-flow fixes on top of the prototype (logic in `platewatch.js`, styles in `src/styles/flow-fixes.css`):
 
 1. **Profile summary line.** Every profile opens with one plain sentence built from the latest official action (FDA Maharashtra), next to its status pill.
-2. **Score paused during an official action.** While a suspension, revocation or improvement notice is open, the public score (profile, homepage previews, QR poster, how-it-works demo) is replaced with "Score paused while an official action is open" and a "Why?" toggle. Owners still see their number, labelled "Paused publicly"; admin live checks add "(paused publicly)".
+2. **Compliance score paused during an official action.** While a suspension, revocation or improvement notice is open, the public compliance score (profile, homepage previews, QR poster, how-it-works demo) is replaced with "Compliance score paused while an official action is open" and a "Why?" toggle. Owners still see their number, labelled "Paused publicly"; admin live checks add "(paused publicly)".
 3. **Instant search.** Home and tracker search suggest up to 6 matches (combobox/listbox, Up/Down/Enter/Esc). No-results state offers "Report a problem" (pre-filled) and "Tell us this place exists". Tracker shows a coverage note.
 4. **Share on WhatsApp.** A real `wa.me` link (new tab) with the summary sentence and profile URL, plus a "Copy link" fallback.
 5. **Reporting.** Replaced by WhatsApp reporting (see below).
@@ -120,6 +120,34 @@ Logic in `src/app/spotcheck.js`, lightbox markup in `src/markup/spotcheck.html`,
 **Faces.** Photos have a `people` flag. In the prototype, flagged photos get a CSS blur over a fixed demo region and a "Faces blurred" note. **Production must run real face detection and blurring on the server before any photo is published.** The CSS blur here is only a visual placeholder and hides nothing in the actual image file.
 
 Seeds: Green Leaf Dhaba has 8 approved sample photos (generated SVG placeholders labelled "Sample photo") across 4 areas, 2 of them from a spot check 10 days ago, plus a missed spot check 3 weeks ago. Its storage evidence is 25 days old, so "Do these next" shows items expiring in 5 days.
+
+## Map and badges
+
+Logic in `src/app/map.js` (Leaflet in `src/app/leaflet-global.js`), styles in `src/styles/map.css`. Packages: `leaflet`, `leaflet.markercluster`. They are loaded only when the map first opens, so other pages stay light.
+
+**Two signals, never mixed.**
+- **Dot colour = official regulatory status only**, from the latest official action: red = suspended or revoked, amber = improvement notice open, green = reinstated after an action, grey (#9D9A92) = no official action on record. Legend: "Red: suspended or revoked · Amber: improvement notice · Green: reinstated after an action · Grey: no official action on record (not a safety rating)". A compliance score or badge never changes a dot. Every dot has a visually hidden "Status: …" label, and status pills keep their text, so colour is never the only signal.
+- **Badge = PlateWatch verification level only**:
+  - "Not claimed yet": the owner hasn't joined. Neutral grey text, not a warning.
+  - "Claimed · self-reported": claimed, but not reviewed or not all passing.
+  - "PlateWatch verified": every applicable checkup requirement has current, approved evidence, there's no unreviewed evidence, and there's no run of missed spot checks. Solid black with the diamond mark.
+  If a verified restaurant misses two spot checks in a row, adds unreviewed evidence, or lets evidence expire, it shows "Claimed · self-reported" with "PlateWatch verification paused: [reason]" on the profile. An open official action doesn't remove the badge; the compliance score stays paused publicly. The labels never say a bare "Verified", so nothing reads as government-verified.
+
+Dots appear in search suggestions, map cards and pins, and the profile header. Badges appear in suggestions, map cards, the profile header and the table-QR poster.
+
+**Map-first Tracker.** `#tracker` opens the map directly (old `#tracker-map` links redirect to `#tracker`); there is no separate list view.
+- **Layout:** the search bar, city and sort dropdowns, and the two filter rows (Official status, PlateWatch verification) sit above the map, followed by the legend and coverage notes.
+- **Results panel:** the accessible list. On desktop it's a 380px panel on the left of the map; on phones, a bottom sheet you drag between collapsed ("N results · drag up"), half and full. It lists cards matching the search and filters inside the visible map area (not counting the part the panel covers), sorted by the sort dropdown. "All results" ignores the map bounds, so a search never misses anything. Restaurants without coordinates show "Location pending" there.
+- **Cards and pins:** each card is a link. Enter opens the profile; a mouse click flies the map to the pin and opens its popup; "Open profile →" opens the profile. Hovering a card highlights its pin, and clicking a pin highlights and scrolls to its card.
+- **Search on the map:** typing filters pins and cards live. Enter or picking a suggestion flies to the best match; an area or city name (e.g. "Andheri") fits the map to every match there.
+- **Accessibility:** a visually hidden "Skip map, go to results" link comes before the map.
+- **Pins and clusters:** pins are status-coloured dots with a white border, plus a small black diamond for PlateWatch verified. Clusters show a count, coloured by the most serious status inside (red > amber > green > grey).
+- **Near me** uses browser geolocation. If it's denied or unavailable it shows "Location unavailable — search an area instead." and nothing else breaks.
+- The initial view is Mumbai (19.0760, 72.8777) at zoom 11, labelled "Sample data".
+
+Tiles come from the public OpenStreetMap tile server, with attribution shown in the map corner. That's fine for a prototype, but production traffic must use a tile provider or self-hosted tiles, per the OpenStreetMap tile usage policy.
+
+Sample data: every original sample restaurant has plausible coordinates except Temple Road Prasad Stall (Shirdi), left without one to show "Location pending". There are also 20 extra fictional Mumbai places with no official action: 15 not claimed, 3 claimed and self-reported, 2 PlateWatch verified. Every combination is covered: red + Not claimed yet (Harbour Lane Café), red + Claimed (Deccan Dosa House), amber + Claimed (Bandra Bao Co.), green + PlateWatch verified (Green Leaf Dhaba), grey + Not claimed yet, and grey + PlateWatch verified.
 
 ## Next steps toward production
 1. Replace in-memory data with a backend (restaurants, regulatory_records, requirements, assessment_responses, evidence, verification_requests, community_reports, restaurant_responses, notifications, audit_log).

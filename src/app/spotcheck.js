@@ -3,7 +3,7 @@
  * - One random spot check per claimed restaurant per week (10:00–21:00), delivered through the WhatsApp bot chat.
  *   It asks for 2–3 checkup items (critical items twice as likely, never repeating the previous check) with a code in every photo.
  * - Approved spot-check photos become fresh evidence and appear in the public kitchen gallery.
- * - Two misses in a row pause the "Platform verified" badge until a spot check is answered on time and approved.
+ * - Two misses in a row pause the "PlateWatch verified" badge until a spot check is answered on time and approved.
  * All photos in the seed are generated placeholders ("Sample photo"). Times run on the shared demo clock in bot.js.
  */
 export function createSpotChecks(ctx){

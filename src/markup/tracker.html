@@ -1,4 +1,4 @@
-<!-- TRACKER -->
+<!-- TRACKER (map-first) -->
 <section id="p-tracker" hidden>
   <div class="wrap">
     <div class="pagehead">
@@ -11,10 +11,29 @@
       <select class="field" id="city" aria-label="City"><option value="">All cities</option></select>
       <select class="field" id="sort" aria-label="Sort"><option value="new">Newest first</option><option value="old">Oldest first</option></select>
     </div>
-    <div class="seg" id="seg"></div>
-    <div class="count" id="count"></div>
+    <div class="fgroup"><span class="fgroup-l" id="segL">Official status</span><div class="seg" id="seg" role="group" aria-labelledby="segL"></div></div>
+    <div class="fgroup"><span class="fgroup-l" id="segVerL">PlateWatch verification</span><div class="seg" id="segVer" role="group" aria-labelledby="segVerL"></div></div>
+    <div id="dotLegend"></div>
     <p class="coverage">Coverage: Maharashtra — official actions tracked. Other states — licence status only.</p>
-    <div class="rows" id="rows"></div>
+    <p class="coverage tmap-cov">Map shows restaurants with an official record or a claimed profile. More are added as data is verified. Grey means no official action on record, not 'safe'.</p>
+
+    <a class="skip-link" href="#tracker" id="skipMap">Skip map, go to results</a>
+    <div class="tmap" id="tmap">
+      <div class="tmap-mapwrap">
+        <div id="map" class="tmap-map" role="region" aria-label="Map of restaurants by official status"></div>
+        <span class="tmap-sample">Sample data</span>
+        <button type="button" class="pillbtn out sm tmap-near" id="nearMe">Near me</button>
+      </div>
+      <section class="tmap-side" id="mapSheet" data-state="peek" aria-labelledby="resH">
+        <button type="button" class="tmap-handle" id="mapHandle" aria-controls="mapList" aria-expanded="false"><span class="tmap-grip" aria-hidden="true"></span><span class="tmap-peek" id="mapPeek"></span></button>
+        <div class="tmap-head">
+          <div class="tmap-hrow"><h2 class="tmap-h" id="resH">Results</h2><span class="tmap-count" id="mapCount" aria-live="polite"></span></div>
+          <div class="tmap-scope" role="group" aria-label="Which results to show"><button type="button" data-scope="area" aria-pressed="true">In this map area</button><button type="button" data-scope="all" aria-pressed="false">All results</button></div>
+        </div>
+        <ul class="tmap-list" id="mapList" tabindex="-1" aria-labelledby="resH"></ul>
+      </section>
+    </div>
+    <p class="tmap-msg" id="nearMsg" role="status"></p>
     <p class="fine">Compiled from public sources. Not an official FDA record. Status is as of each entry's "last verified" date. Not listed means no reported action, not a guarantee of hygiene.</p>
   </div>
 </section>

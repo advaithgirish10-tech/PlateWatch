@@ -8,8 +8,9 @@
 /* global QRCode */
 import { createReporting } from "./bot.js";
 import { createSpotChecks } from "./spotcheck.js";
+import { createMap, COORDS, EXTRA_PLACES, EXTRA_CLAIMED, EXTRA_VERIFIED } from "./map.js";
 export function initApp() {
-const TYPES={sus:["Suspended","st-sus",""],rev:["Revoked","st-rev",""],imp:["Improvement notice","st-imp",""],ok:["Reinstated","st-ok",""]};
+const TYPES={sus:["Suspended","st-sus",""],rev:["Revoked","st-rev",""],imp:["Improvement notice","st-imp",""],ok:["Reinstated","st-ok",""],none:["No official action","st-none",""]};
 const D=[
  {id:1,name:"Harbour Lane Café",area:"Fort",city:"Mumbai",cat:"Café",lic:"11526998000101",verified:"2026-09-22",hist:[["2026-09-16","sus","Raw and cooked food stored together; blocked drainage near kitchen"]]},
  {id:2,name:"Shree Mithai Bhandar",area:"Malad West",city:"Mumbai",cat:"Sweet shop",lic:"11524011000233",verified:"2026-09-22",hist:[["2026-09-21","sus","Pest activity in storage room; expired raw material on premises"]]},
@@ -26,8 +27,13 @@ const D=[
  {id:13,name:"Bandra Bao Co.",area:"Bandra West",city:"Mumbai",cat:"Café",lic:"11526027001589",verified:"2026-09-22",hist:[["2026-09-22","imp","Pest-control certificate expired; water test report missing"]]},
  {id:14,name:"Andheri Chaat Corner",area:"Andheri West",city:"Mumbai",cat:"Restaurant",lic:"11526031001694",verified:"2026-09-21",hist:[["2026-09-12","imp","Uncovered food on display; no handwash station"]]}
 ];
+/* sample coordinates for the map, plus fictional Mumbai places with no official action on record */
+D.forEach(r=>{if(COORDS[r.id])r.ll=COORDS[r.id]});
+D.push(...EXTRA_PLACES);
 const TODAY=new Date("2026-09-23");
-const cur=r=>r.hist[r.hist.length-1];
+/* places with no official action get a "none" entry instead of a history item */
+const NONE=["","none","No official action on record"];
+const cur=r=>r.hist[r.hist.length-1]||NONE;
 const fmt=s=>new Date(s).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});
 const st=t=>`<span class="st ${TYPES[t][1]}"><i>${TYPES[t][2]}</i>${TYPES[t][0]}</span>`;
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -48,6 +54,7 @@ const hashFor=(p,arg)=>p==="detail"?"profile-"+arg:PAGE_HASH[p];
 function parseHash(h){
   h=(h||"").replace(/^#/,"");
   const m=h.match(/^profile-(\d+)$/);if(m)return D.some(r=>r.id===+m[1])?{p:"detail",arg:+m[1]}:null;
+  if(h==="tracker-map")return {p:"tracker"};   /* old link: the tracker is the map now */
   const p=Object.keys(PAGE_HASH).find(k=>PAGE_HASH[k]===h);return p?{p}:null;
 }
 S.page={p:"home"};S.stack=[];
@@ -69,7 +76,7 @@ function go(p,arg,opt){
   if(p==="detail")renderDetail(arg);
   if(p==="login")renderAuth("phone");
   if(p==="account")renderAccount();
-  if(p==="tracker")renderList();
+  if(p==="tracker")renderTracker();
   if(p==="biz")renderBiz(arg);
   if(p==="dash")renderDash(arg||"overview");
   if(p==="admin")renderAdmin(arg||"verify");
@@ -84,12 +91,6 @@ document.getElementById("menuBtn").onclick=e=>{const d=document.getElementById("
 document.getElementById("authBtn").onclick=()=>{if(S.user){go("account");return}S.after="account";go("login")};
 function syncAuthBtn(){const b=document.getElementById("authBtn");b.textContent=S.user?"My alerts":"Log in"}
 
-/* rows */
-function rowHTML(r){const c=cur(r);return `<div class="r" tabindex="0" role="link" data-id="${r.id}">
-  <span class="d">${fmt(c[0])}</span>
-  <div><div class="n">${esc(r.name)}</div><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</div></div>
-  <div class="why">${esc(c[2])}</div>${st(c[1])}<span class="arr" aria-hidden="true">→</span></div>`}
-function bindRows(el){el.addEventListener("click",e=>{const r=e.target.closest(".r");if(r)go("detail",+r.dataset.id)});el.addEventListener("keydown",e=>{if(e.key==="Enter"){const r=e.target.closest(".r");if(r)go("detail",+r.dataset.id)}})}
 
 /* ---------- FLOW FIXES: shared helpers ---------- */
 const AUTH="FDA Maharashtra";
@@ -106,7 +107,7 @@ function summaryLine(r){
 }
 /* the PlateWatch score is never shown publicly while an official action is open */
 const paused=rid=>{const r=D.find(x=>x.id===rid);return !!r&&r.hist.length>0&&["sus","rev","imp"].includes(cur(r)[1])};
-const pausedHTML=()=>`<div class="pz"><p class="pz-t">Score paused while an official action is open.</p><details class="pz-why"><summary>Why?</summary><p>Our score measures submitted evidence. It never overrides an official finding.</p></details></div>`;
+const pausedHTML=()=>`<div class="pz"><p class="pz-t">Compliance score paused while an official action is open.</p><details class="pz-why"><summary>Why?</summary><p>Our compliance score measures submitted evidence. It never overrides an official finding.</p></details></div>`;
 function pubScore(rid,n){return paused(rid)?pausedHTML():`<div class="score">${n}<small>/100</small></div>`}
 const progHTML=(done,tot)=>`<div class="prog"><div class="prog-l"><b>${done} of ${tot}</b> requirements met</div><span class="prog-t" aria-hidden="true"><i style="width:${tot?Math.round(done/tot*100):0}%"></i></span></div>`;
 
@@ -122,7 +123,7 @@ function attachSuggest(input,panel,{onPick,noResults}){
     const q=input.value.trim();if(!q){close();return}
     items=findPlaces(q).slice(0,6);act=-1;input.removeAttribute("aria-activedescendant");
     if(!items.length){input.setAttribute("aria-expanded","false");if(!noResults){close();return}panel.innerHTML=noResults(q);panel.hidden=false;open=true;return}
-    panel.innerHTML=`<ul role="listbox" id="${lb}" aria-label="Matching restaurants">${items.map((r,i)=>`<li role="option" id="${lb}-${i}" data-sid="${r.id}" aria-selected="false"><span class="sg-main"><span class="sg-n">${esc(r.name)}</span><span class="sg-a">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</span></span>${st(cur(r)[1])}</li>`).join("")}</ul>`;
+    panel.innerHTML=`<ul role="listbox" id="${lb}" aria-label="Matching restaurants">${items.map((r,i)=>`<li role="option" id="${lb}-${i}" data-sid="${r.id}" aria-selected="false"><span class="sg-main"><span class="sg-n">${MAP.dotHTML(r)}<span>${esc(r.name)}</span>${MAP.badgeHTML(r.id)}</span><span class="sg-a">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</span></span>${st(cur(r)[1])}</li>`).join("")}</ul>`;
     panel.hidden=false;open=true;input.setAttribute("aria-expanded","true");
   };
   const mark=()=>{panel.querySelectorAll("[role=option]").forEach((o,i)=>o.setAttribute("aria-selected",String(i===act)));
@@ -164,33 +165,42 @@ function selectNode(el){const s=getSelection(),g=document.createRange();g.select
 const cnt=t=>D.filter(r=>cur(r)[1]===t).length;
 const everImp=D.filter(r=>r.hist.some(h=>h[1]==="imp")).length;
 document.getElementById("numbers").innerHTML=[[D.length,"Food establishments tracked"],[everImp,"Improvement notices logged"],[cnt("sus"),"Licences suspended"],[new Set(D.map(r=>r.city)).size,"Cities and counting"]].map(([n,l])=>`<div><b>${n}</b><span>${l}</span></div>`).join("")+`<div class="smp">Prototype · counts from fictional sample records</div>`;
-const latest=[...D].sort(byNew);
+const latest=D.filter(r=>r.hist.length).sort(byNew);
 const tick=latest.slice(0,10).map(r=>{const c=cur(r);return `<span class="it"><span class="dot d-${c[1]}"></span><b>${esc(r.name)}</b><span>${c[1]==="ok"?"Cleared":TYPES[c[1]][0]}</span><span class="m">${esc(r.area)} · ${fmt(c[0])}</span></span>`}).join("");
 document.getElementById("ticker").innerHTML=tick+tick;
-document.getElementById("homeSearch").onsubmit=e=>{e.preventDefault();S.q=document.getElementById("homeQ").value;document.getElementById("q").value=S.q;go("tracker")};
+document.getElementById("homeSearch").onsubmit=e=>{e.preventDefault();S.q=document.getElementById("homeQ").value;document.getElementById("q").value=S.q;S.pendingSearch=S.q;go("tracker")};
 attachSuggest(document.getElementById("homeQ"),document.getElementById("homeSug"),{onPick:r=>go("detail",r.id),noResults:noResHTML});
 attachSuggest(document.getElementById("finalQ"),document.getElementById("finalSug"),{onPick:r=>go("detail",r.id),noResults:noResHTML});
 document.querySelectorAll("[data-try]").forEach(b=>b.onclick=()=>{S.q=b.dataset.try;document.getElementById("q").value=S.q;go("tracker")});
 
 /* tracker */
 [...new Set(D.map(r=>r.city))].sort().forEach(c=>{const o=document.createElement("option");o.value=c;o.textContent=c;document.getElementById("city").append(o)});
-const segDefs=[["","All"],["sus","Suspended"],["imp","Improvement notice"],["rev","Revoked"],["ok","Reinstated"]];
-function renderSeg(){document.getElementById("seg").innerHTML=segDefs.map(([v,l])=>`<button data-v="${v}" aria-pressed="${S.type===v}">${l}</button>`).join("")}
-document.getElementById("seg").onclick=e=>{const b=e.target.closest("button");if(!b)return;S.type=b.dataset.v;renderSeg();renderList()};
-function renderList(){
-  const q=S.q.trim().toLowerCase();
-  let rows=D.filter(r=>(!q||(r.name+" "+r.area+" "+r.city+" "+r.cat+" "+r.lic).toLowerCase().includes(q))&&(!S.city||r.city===S.city)&&(!S.type||cur(r)[1]===S.type));
-  rows.sort(S.sort==="new"?byNew:(a,b)=>-byNew(a,b));
-  document.getElementById("count").textContent=`${rows.length} ${rows.length===1?"ENTRY":"ENTRIES"}`;
-  document.getElementById("rows").innerHTML=rows.length?rows.map(rowHTML).join("")
-    :q&&!findPlaces(q).length?`<div class="empty empty-nr">${noResHTML(S.q.trim())}</div>`
-    :`<div class="empty"><h3 class="h-mid">Nothing found for “${esc(S.q||"this filter")}”.</h3><p>No reported FDA action. That's not a guarantee of hygiene. It just means nothing has been logged.</p></div>`;
+const segDefs=[["","All"],["red","Suspended or revoked"],["amber","Improvement notice"],["green","Reinstated"],["grey","No official action"]];
+const verDefs=[["","All"],["verified","PlateWatch verified"],["claimed","Claimed"],["none","Not claimed yet"]];
+S.ver="";
+function renderSeg(){
+  document.getElementById("seg").innerHTML=segDefs.map(([v,l])=>`<button type="button" data-v="${v}" aria-pressed="${S.type===v}">${v?`<span class="sdot sdot-${v}" aria-hidden="true"></span>`:""}${l}</button>`).join("");
+  document.getElementById("segVer").innerHTML=verDefs.map(([v,l])=>`<button type="button" data-ver="${v}" aria-pressed="${S.ver===v}">${l}</button>`).join("");
 }
-bindRows(document.getElementById("rows"));
-document.getElementById("q").oninput=e=>{S.q=e.target.value;renderList()};
-attachSuggest(document.getElementById("q"),document.getElementById("qSug"),{onPick:r=>go("detail",r.id)});
-document.getElementById("city").onchange=e=>{S.city=e.target.value;renderList()};
-document.getElementById("sort").onchange=e=>{S.sort=e.target.value;renderList()};
+document.getElementById("seg").onclick=e=>{const b=e.target.closest("button");if(!b)return;S.type=b.dataset.v;renderSeg();applyFilters()};
+document.getElementById("segVer").onclick=e=>{const b=e.target.closest("button");if(!b)return;S.ver=b.dataset.ver;renderSeg();applyFilters()};
+function filtered(){
+  const q=S.q.trim().toLowerCase();
+  const rows=D.filter(r=>(!q||(r.name+" "+r.area+" "+r.city+" "+r.cat+" "+r.lic).toLowerCase().includes(q))&&(!S.city||r.city===S.city)&&(!S.type||MAP.dotOf(r)===S.type)&&(!S.ver||MAP.badgeOf(r.id)===S.ver));
+  return rows.sort(S.sort==="new"?byNew:(a,b)=>-byNew(a,b));
+}
+function applyFilters(){if(S.page.p==="tracker")MAP.refresh()}
+/* the Tracker is the map: filters, legend, then the map with its results panel */
+function renderTracker(){
+  document.getElementById("dotLegend").innerHTML=MAP.legendHTML();
+  MAP.show().then(()=>{if(S.pendingSearch){const q=S.pendingSearch;S.pendingSearch=null;MAP.searchGo(q)}});
+}
+document.getElementById("q").oninput=e=>{S.q=e.target.value;applyFilters()};
+attachSuggest(document.getElementById("q"),document.getElementById("qSug"),{onPick:r=>MAP.focusPlace(r.id)});
+/* Enter with no suggestion selected: fly to the best match, or fit an area */
+document.getElementById("q").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.defaultPrevented){e.preventDefault();MAP.searchGo(S.q)}});
+document.getElementById("city").onchange=e=>{S.city=e.target.value;applyFilters()};
+document.getElementById("sort").onchange=e=>{S.sort=e.target.value;applyFilters()};
 
 /* detail (v2, superseded by renderDetail below) */
 function renderDetailV2(id){
@@ -398,8 +408,7 @@ const PROF={};
              {m:"Aug 2026",score:84,kind:"Issues resolved",notes:["Pest-control contract and records uploaded","New separate storage shelving photographed"]}]};
   const ages={kitchen:3,storage:25,pest:43,personal:10,clean:5,docs:20,ops:6};
   REQS.forEach(r=>{g.resp[r.id]="yes";g.ev[r.id]=[mkEv(r.id,ages[r.cat])]});
-  g.resp.o4="no";g.ev.o4=[];
-  g.ev.h3=[mkEv("h3",70)];
+  g.ev.h3=[mkEv("h3",12)];
   g.ev.d2=[mkEv("d2",40)];
   PROF[3]=g;
   const b={owner:"98191 44556",level:"self",verifiedOn:null,adminNote:"",resp:{},ev:{},
@@ -407,6 +416,16 @@ const PROF={};
   REQS.forEach((r,i)=>{b.resp[r.id]="yes";b.ev[r.id]=[mkEv(r.id,2+(i%12),"submitted")]});
   b.resp.p3="no";b.ev.p3=[];b.resp.d2="no";b.ev.d2=[];b.resp.o4="na";b.ev.o4=[];
   PROF[13]=b;
+  /* a suspended restaurant that has claimed its profile: red dot + its badge, compliance score paused publicly */
+  const dd={owner:"98224 60917",level:"self",verifiedOn:null,adminNote:"",resp:{},ev:{},journey:[{m:"Aug 2026",score:58,kind:"First checkup",notes:["Pest-control records missing"]}]};
+  REQS.forEach((r,i)=>{dd.resp[r.id]="yes";dd.ev[r.id]=i%5===0?[]:[mkEv(r.id,2+(i%9),"submitted")]});
+  PROF[9]=dd;
+  /* extra sample places: 2 fully PlateWatch verified, 3 claimed and self-reported */
+  const phone=id=>"98"+String(20000000+id*7919).slice(0,3)+" "+String(10000+id*37).slice(0,5);
+  EXTRA_VERIFIED.forEach((id,k)=>{const v={owner:phone(id),level:"platform",verifiedOn:"2026-09-1"+(4+k),adminNote:"",resp:{},ev:{},journey:[]};
+    REQS.forEach((r,i)=>{v.resp[r.id]="yes";v.ev[r.id]=[mkEv(r.id,1+((i+k)%9))]});PROF[id]=v});
+  EXTRA_CLAIMED.forEach((id,k)=>{const c={owner:phone(id),level:"self",verifiedOn:null,adminNote:"",resp:{},ev:{},journey:[]};
+    REQS.forEach((r,i)=>{c.resp[r.id]="yes";c.ev[r.id]=(i+k)%4===0?[]:[mkEv(r.id,3+(i%10),"submitted")]});PROF[id]=c});
 })();
 let REPORTS=[
  {id:1,rid:3,text:"Saw a cockroach near the tandoor area during dinner.",date:"2026-07-14",status:"resolved",photo:true,flag:false,response:{text:"Full pest-control treatment done on 18 July and a monthly contract signed. Certificate uploaded to our profile.",date:"2026-07-19",ev:"pest-control-certificate.pdf"}},
@@ -415,9 +434,9 @@ let REPORTS=[
  {id:4,rid:7,text:"Water logging near the kitchen's back entrance.",date:"2026-09-18",status:"verified",photo:true,flag:false,response:null}
 ];
 let RID=5;
-const RS={pending:"Awaiting moderation",accepted:"Moderated",rejected:"Not used",review:"Under review",verified:"Verified · unresolved",resolved:"Resolved",dismissed:"Not substantiated"};
+const RS={pending:"Awaiting moderation",accepted:"Moderated",rejected:"Not used",review:"Under review",verified:"Confirmed · unresolved",resolved:"Resolved",dismissed:"Not substantiated"};
 const rsPill=s=>`<span class="rs rs-${s}">${RS[s]}</span>`;
-const LV={self:"Self-reported",pending:"Verification requested",platform:"Platform verified"};
+const LV={self:"Claimed · self-reported",pending:"Verification requested",platform:"PlateWatch verified"};
 const lvl=l=>`<span class="lvl lvl-${l}">${LV[l]}</span>`;
 S.owner=null;S.openCats=new Set(["kitchen"]);S.claim=null;
 function loginAs(ph){if(S.user&&S.user.phone===ph)return;S.user={phone:ph,name:"",wa:true};syncAuthBtn()}
@@ -430,9 +449,11 @@ function addApprovedPhoto(rid,req,o){
   (p.ev[req]=p.ev[req]||[]).push(e);if(p.resp[req]!=="yes")p.resp[req]="yes";return e;
 }
 const SCM=createSpotChecks({D,PROF,REQS,REQ,CAT,CATS,RP,esc,fmt,toast,aiFor,addEvidence:addApprovedPhoto,onChange:refreshReports});
-/* the verification badge, paused publicly after two missed spot checks in a row */
-const lvlFor=rid=>SCM.pausedBadge(rid)?`<span class="lvl lvl-paused">Verification paused: missed spot checks</span>`:lvl(PROF[rid].level);
-const levelText=rid=>SCM.pausedBadge(rid)?"Verification paused: missed spot checks":LV[PROF[rid].level];
+/* official-status dots and PlateWatch badges (never mixed), and the tracker map */
+const MAP=createMap({D,PROF,REQS,CAT,daysAgo,SCM,cur,st,esc,fmt,summaryLine,filtered,go,query:()=>S.q,noResults:noResHTML});
+/* the public PlateWatch level as a pill: PlateWatch verified, or Claimed · self-reported (including while paused) */
+const lvlFor=rid=>MAP.badgeOf(rid)==="verified"?lvl("platform"):`<span class="lvl lvl-self">${LV.self}</span>`;
+const levelText=rid=>MAP.badgeLabel(rid);
 
 function currentEv(rid,reqId){const p=PROF[rid];const c=CAT[REQ[reqId].cat];return (p.ev[reqId]||[]).filter(e=>e.status!=="rejected"&&daysAgo(e.date)<=c.expiry)}
 function scoreOf(rid){
@@ -473,7 +494,7 @@ function journeySVG(rid,hideNow){
 }
 function journeyList(rid,hideNow){const p=PROF[rid];const sc=scoreOf(rid);
   return `<div class="jlist">${p.journey.map(j=>`<div><span class="eyebrow">${j.m}</span><b>${j.score}</b><div><span style="font-size:13px;font-weight:500">${j.kind}</span><ul>${j.notes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul></div></div>`).join("")}
-  ${hideNow?`<div><span class="eyebrow">Now</span><b>—</b><div><span style="font-size:13px;font-weight:500">Score paused while an official action is open</span></div></div></div>`:`<div><span class="eyebrow">Now</span><b>${sc.overall}</b><div><span style="font-size:13px;font-weight:500">${sc.missing.length?sc.missing.length+" requirement"+(sc.missing.length>1?"s":"")+" open":"All requirements met"}</span></div></div></div>`}`}
+  ${hideNow?`<div><span class="eyebrow">Now</span><b>—</b><div><span style="font-size:13px;font-weight:500">Compliance score paused while an official action is open</span></div></div></div>`:`<div><span class="eyebrow">Now</span><b>${sc.overall}</b><div><span style="font-size:13px;font-weight:500">${sc.missing.length?sc.missing.length+" requirement"+(sc.missing.length>1?"s":"")+" open":"All requirements met"}</span></div></div></div>`}`}
 
 /* ---------- PUBLIC PROFILE ---------- */
 function renderDetail(id){
@@ -489,7 +510,8 @@ function renderDetail(id){
   let comp="";
   if(p){const sc=scoreOf(id),ec=evCounts(id),pz=paused(id);
     comp=`<div class="lane">
-      <span class="tag ${p.level==="platform"&&!SCM.pausedBadge(id)?"tag-plat":"tag-self"}">${SCM.pausedBadge(id)?"Verification paused: missed spot checks":p.level==="platform"?"Platform verified · reviewed "+fmt(p.verifiedOn):"Restaurant-submitted · not yet verified"}</span>
+      <span class="tag ${MAP.badgeOf(id)==="verified"?"tag-plat":"tag-self"}">${MAP.badgeOf(id)==="verified"?"PlateWatch verified · reviewed "+fmt(p.verifiedOn):"Restaurant-submitted · not yet PlateWatch verified"}</span>
+      ${MAP.pausedNote(id)}
       ${SCM.missedHTML(id)}
       <h2 class="h-mid">Food Safety Compliance</h2>
       <div class="scorewrap">${pubScore(id,sc.overall)}
@@ -498,7 +520,7 @@ function renderDetail(id){
       ${barsHTML(sc)}
       <h3 style="font-size:17px;margin-top:30px">Evidence freshness</h3>${freshHTML(id)}
       <div class="evc"><span><b>${ec.total}</b> pieces of evidence</span><span><b>${ec.photo}</b> photos</span><span><b>${ec.video}</b> videos</span><span><b>${ec.document}</b> documents</span><span>Last upload ${ec.last?ago(ec.last):"—"}</span></div>
-      <p class="disc">PlateWatch's own score, calculated from the restaurant's evidence against ${REQS.length} food-safety requirements. It is not an FSSAI hygiene rating or a government certificate.</p>
+      <p class="disc">PlateWatch's own compliance score, calculated from the restaurant's evidence against ${REQS.length} food-safety requirements. It is not an FSSAI hygiene rating or a government certificate.</p>
     </div>
     <div class="lane"><span class="tag tag-self">Restaurant-submitted · reviewed by PlateWatch</span><h2 class="h-mid">Kitchen gallery</h2><p class="gal-sub">Photos submitted by the restaurant, reviewed by PlateWatch.</p>${SCM.galleryHTML(id)}</div>
     <div class="lane"><span class="tag tag-self">Restaurant-submitted · scored by PlateWatch</span><h2 class="h-mid">Compliance journey</h2>${journeySVG(id,pz)}${journeyList(id,pz)}</div>`;
@@ -512,13 +534,13 @@ function renderDetail(id){
   <button class="back" id="back">← Back to ${esc(pageName(bt))}</button>
   <div class="sumline">${st(c[1])}<p class="sumline-t">${esc(sum)}</p></div>
   <div class="dhead">
-    <div>${p?lvlFor(id):""}<h1 class="h-big"${p?' style="margin-top:16px"':""}>${esc(r.name)}</h1><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</div></div>
+    <div><h1 class="h-big pnm">${MAP.dotHTML(r)}<span>${esc(r.name)}</span></h1><div class="pnm-b">${MAP.badgeHTML(id)}</div><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</div></div>
     <div class="sharebar">
       <div class="sharebar-btns"><button class="pillbtn ${f?"out":""}" id="followBtn">${f?"✓ Following":"Follow for alerts"}</button><a class="pillbtn out" id="shareWa" href="${esc(wa)}" target="_blank" rel="noopener">Share on WhatsApp</a><button class="pillbtn out" id="copyLink" type="button">Copy link</button></div>
       <span class="shareurl" id="profUrl">${esc(url)}</span>
     </div>
   </div>
-  <div class="legend"><span class="tag tag-off">Official record</span><span class="tag tag-self">Restaurant-submitted</span><span class="tag tag-plat">Platform verified</span><span class="tag tag-com">Community report</span></div>
+  <div class="legend"><span class="tag tag-off">Official record</span><span class="tag tag-self">Restaurant-submitted</span><span class="tag tag-plat">PlateWatch verified</span><span class="tag tag-com">Community report</span></div>
   <div class="dgrid" style="padding-top:0">
     <div>
       <div class="lane">
@@ -531,7 +553,8 @@ function renderDetail(id){
         </div>
         <div class="muted" style="margin:-20px 0 22px;font-size:13px">Last verified ${fmt(r.verified)}${stale?" · <span class='st st-imp'>Status unverified</span>":""}</div>
         <h3 style="font-size:17px">Regulatory history</h3>
-        <ol class="tl">${[...r.hist].reverse().map(h=>`<li><span class="dot"></span><div><div class="dt">${fmt(h[0])}</div>${st(h[1])}<p>${esc(h[2])}</p></div></li>`).join("")}</ol>
+        ${r.hist.length?`<ol class="tl">${[...r.hist].reverse().map(h=>`<li><span class="dot"></span><div><div class="dt">${fmt(h[0])}</div>${st(h[1])}<p>${esc(h[2])}</p></div></li>`).join("")}</ol>`:`<p class="muted">No official action on record as of ${fmt(r.verified)}. This is not a guarantee of hygiene.</p>`}
+        ${MAP.legendHTML()}
       </div>
       ${comp}
       <div class="lane">
@@ -615,6 +638,7 @@ function notifs(rid){const p=PROF[rid],out=[];
   Object.values(p.ev).flat().filter(e=>e.status==="more").forEach(e=>out.push(`Reviewer asked for more evidence: ${esc(e.name)}. <button class="x" data-tab="checkup">Open checkup</button>`));
   Object.values(p.ev).flat().filter(e=>e.status==="rejected").forEach(e=>out.push(`Evidence rejected: ${esc(e.name)}. Upload a clearer file.`));
   if(p.adminNote)out.push(esc(p.adminNote));
+  const vf=MAP.verif(rid);if(vf.paused)out.push(`PlateWatch verification paused: ${esc(vf.paused)}.`);
   return out;
 }
 /* the 3 highest-impact open items: critical first, then highest weight, then expired evidence */
@@ -666,13 +690,13 @@ function renderDash(tab){
     <section class="sc-preview"><span class="tag tag-self">What diners see</span><h2 class="h-mid">Your kitchen gallery</h2><p class="gal-sub">Only photos our reviewers approved. Spot-check photos are tagged.</p>${SCM.galleryHTML(rid)}</section>`;
   }
   if(tab==="checkup"){
-    body=`<div class="stick"><span>Score now <b>${sc.overall}/100</b>${paused(rid)?" (paused publicly)":""} · ${sc.done}/${sc.tot} met${sc.unanswered?` · ${sc.unanswered} unanswered`:""}</span><span class="muted" style="font-size:13px">Based on public FSSAI hygiene parameters. Not an official FSSAI audit.</span></div>
+    body=`<div class="stick"><span>Compliance score now <b>${sc.overall}/100</b>${paused(rid)?" (paused publicly)":""} · ${sc.done}/${sc.tot} met${sc.unanswered?` · ${sc.unanswered} unanswered`:""}</span><span class="muted" style="font-size:13px">Based on public FSSAI hygiene parameters. Not an official FSSAI audit.</span></div>
     <div style="padding-top:24px">${nextBestHTML(sc,rid)}${progHTML(sc.done,sc.tot)}</div>
     ${CATS.map(c=>{const reqs=REQS.filter(q=>q.cat===c.k);const x=sc.cats[c.k];return `<details class="cat" data-cat="${c.k}" ${S.openCats.has(c.k)?"open":""}><summary><h3>${c.name}</h3><span class="catprog"><span class="prog-t" aria-hidden="true"><i style="width:${x.tot?Math.round(x.done/x.tot*100):0}%"></i></span><span>${x.done} of ${x.tot}</span></span><span class="p">${x.pct==null?"N/A":x.pct+"%"} · evidence valid ${c.expiry} days</span><span class="ch" aria-hidden="true">+</span></summary>
       ${reqs.map(q=>{const a=p.resp[q.id];const evs=p.ev[q.id]||[];return `<div class="req" id="req-${q.id}">
         <div><div class="q">${esc(q.text)}</div><div class="qm">${q.crit?'<span class="c">■ Critical</span>':""}<span>Weight ${q.w}</span>${a==="yes"&&!currentEv(rid,q.id).length?"<span class='c'>Evidence needed</span>":""}</div></div>
         <div class="ans" role="group" aria-label="Answer">${["yes","no","na"].map(v=>`<button data-ans="${v}" data-q="${q.id}" aria-pressed="${a===v}">${v==="na"?"N/A":v[0].toUpperCase()+v.slice(1)}</button>`).join("")}</div>
-        ${evs.map(e=>{const exp=daysAgo(e.date)>c.expiry&&e.status!=="rejected";const stt=exp?"expired":e.status;const lab={verified:"Verified",submitted:"Submitted",rejected:"Rejected",more:"More needed",expired:"Expired"}[stt];return `<div class="ev"><div class="th">${e.url?`<img src="${e.url}" alt="">`:e.type.toUpperCase()}</div><div><div class="nm">${esc(e.name)}<span class="evs evs-${stt}">${lab}</span></div><div class="mt">${e.type} · uploaded ${ago(e.date)}${e.flag?" · flagged by reviewer":""}</div>${e.note?`<div class="mt">Note: ${esc(e.note)}</div>`:""}
+        ${evs.map(e=>{const exp=daysAgo(e.date)>c.expiry&&e.status!=="rejected";const stt=exp?"expired":e.status;const lab={verified:"Approved",submitted:"Submitted",rejected:"Rejected",more:"More needed",expired:"Expired"}[stt];return `<div class="ev"><div class="th">${e.url?`<img src="${e.url}" alt="">`:e.type.toUpperCase()}</div><div><div class="nm">${esc(e.name)}<span class="evs evs-${stt}">${lab}</span></div><div class="mt">${e.type} · uploaded ${ago(e.date)}${e.flag?" · flagged by reviewer":""}</div>${e.note?`<div class="mt">Note: ${esc(e.note)}</div>`:""}
           ${e.ai?`<div class="ai"><span class="tag tag-plat">AI-assisted observation · not a certification</span>${e.ai.map(o=>`<div>${esc(o)}</div>`).join("")}<div class="muted">Status: ${e.status==="verified"?"Confirmed by reviewer":"Needs human review"}</div></div>`:""}</div></div>`}).join("")}
         <div class="evrow"><label class="upl">+ Add photo, video or PDF<input type="file" accept="image/*,video/*,.pdf" data-up="${q.id}"></label></div>
         <input class="noteinput" placeholder="Add a note for the reviewer (optional)" data-note="${q.id}" aria-label="Note for ${esc(q.text)}">
@@ -734,7 +758,7 @@ document.getElementById("dash").addEventListener("change",e=>{
     let url=null;if(type==="photo"){try{url=URL.createObjectURL(f)}catch(_){}}
     (p.ev[q]=p.ev[q]||[]).push({id:EVID++,name:f.name,type,date:TODAY.toISOString().slice(0,10),status:"submitted",note:noteEl?noteEl.value.trim():"",url,flag:false,ai:type==="photo"?aiFor(q):type==="video"?["Video received. Frame-by-frame review runs on the live platform."]:null});
     if(!p.resp[q])p.resp[q]="yes";
-    if(p.level==="platform"){p.level="self";p.adminNote="New evidence added. Request verification again to keep your Platform verified badge."}
+    /* PlateWatch verified pauses automatically while this evidence waits for review */
     keepOpen();renderDash("checkup");const el=document.getElementById("req-"+q);if(el)el.scrollIntoView({block:"center"});toast("Evidence submitted");
   }
 });
@@ -1015,7 +1039,7 @@ document.getElementById("adm").addEventListener("click",e=>{
   if(e.target.closest("[data-clear]")){S.adm.q="";S.adm.filter="all";renderAdmin("evidence");return}
   const v=e.target.closest("[data-v]");
   if(v){const p=PROF[+v.dataset.rid];const a=v.dataset.v;
-    if(a==="approve"){p.level="platform";p.verifiedOn=TODAY.toISOString().slice(0,10);p.adminNote="";Object.values(p.ev).flat().forEach(x=>{if(x.status==="submitted")x.status="verified"});toast("Approved. Now Platform verified.")}
+    if(a==="approve"){p.level="platform";p.verifiedOn=TODAY.toISOString().slice(0,10);p.adminNote="";Object.values(p.ev).flat().forEach(x=>{if(x.status==="submitted")x.status="verified"});toast("Approved. Now PlateWatch verified.")}
     if(a==="more"){p.level="self";p.adminNote="Reviewer requested more evidence before verification. Check items marked 'More needed'.";toast("Sent back for more evidence")}
     if(a==="reject"){p.level="self";p.adminNote="Verification request was not approved. Review your evidence and try again.";toast("Request rejected")}
     renderAdmin("verify");return}
@@ -1110,14 +1134,14 @@ function renderHomeExtras(){
    <div class="p5-sec" style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center"><span class="tag tag-off">Official status</span>${st(c[1])}</div>`;
   document.getElementById("pmOpen").onclick=()=>go("detail",id);
   /* journey */
-  const pts=[...p.journey.map(j=>({m:j.m,s:j.score,k:j.kind,n:j.notes})),{m:"Sep 2026 · now",s:paused(id)?null:sc.overall,k:paused(id)?"Score paused while an official action is open":"Current",n:sc.missing.length?[sc.missing.length+" requirement"+(sc.missing.length>1?"s":"")+" open"]:["All requirements met"],now:true}];
+  const pts=[...p.journey.map(j=>({m:j.m,s:j.score,k:j.kind,n:j.notes})),{m:"Sep 2026 · now",s:paused(id)?null:sc.overall,k:paused(id)?"Compliance score paused while an official action is open":"Current",n:sc.missing.length?[sc.missing.length+" requirement"+(sc.missing.length>1?"s":"")+" open"]:["All requirements met"],now:true}];
   document.getElementById("jrChart").innerHTML=`<div class="tl5">${pts.map(q=>`<div class="tl5-i ${q.now?"now":""}"><span class="tl5-m">${esc(q.m)}</span><span class="tl5-dot"></span><b>${q.s==null?"—":q.s+"<small>/100</small>"}</b><span class="k2">${esc(q.k)}</span><ul>${q.n.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`).join("")}</div><p class="tl5-note">Sample: ${esc(r.name)}'s evidence over three months. Scores are recalculated as evidence is added or expires.</p>`;
   /* community */
   const x=REPORTS.find(y=>y.id===1);
   document.getElementById("cmExample").innerHTML=`<div class="p5-top"><div><div class="p5-k">Community report · sample</div><div class="p5-n">${esc(r.name)}</div></div>${rsPill(x.status)}</div>
    <div class="rep"><div class="top"><span class="tag tag-com">Reported ${fmt(x.date)}</span>${x.photo?"<span>Photo attached</span>":""}</div><p style="font-size:17px">${esc(x.text)}</p>
    <div class="resp"><span class="tag tag-self">Restaurant response · ${fmt(x.response.date)}</span><div>${esc(x.response.text)}</div><div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${esc(x.response.ev)}</div></div></div>`;
-  document.getElementById("finalSearch").onsubmit=e=>{e.preventDefault();S.q=document.getElementById("finalQ").value;document.getElementById("q").value=S.q;go("tracker")};
+  document.getElementById("finalSearch").onsubmit=e=>{e.preventDefault();S.q=document.getElementById("finalQ").value;document.getElementById("q").value=S.q;S.pendingSearch=S.q;go("tracker")};
   document.getElementById("navSearch").onclick=()=>{go("tracker");setTimeout(()=>document.getElementById("q").focus(),50)};
 }
 heroCards();initHero();renderHomeExtras();
@@ -1137,7 +1161,7 @@ heroCards();initHero();renderHomeExtras();
             {d:"Mar 2024",a:"Licence active",src:"FSSAI licence search (sample)",desc:"Licence renewed. No regulatory action on record at the time."}];
   const JR=[{m:"JUL 2026",s:78,n:"Self-reported evidence, submitted before any inspection."},
             {m:"AUG 2026",s:61,n:"Score fell: storage and pest-control evidence expired, and one photo was rejected."},
-            {m:"SEP 2026",s:null,n:"Corrective evidence uploaded after the suspension. Score paused while an official action is open: our score measures submitted evidence and never overrides an official finding."}];
+            {m:"SEP 2026",s:null,n:"Corrective evidence uploaded after the suspension. Compliance score paused while an official action is open: our compliance score measures submitted evidence and never overrides an official finding."}];
   const DM={step:0,q:"",typed:false,tl:0,jr:2,cat:"Pest activity",ups:new Set(),sent:false,resp:false,ev:false,rev:false,seen:new Set([0])};
   const body=document.getElementById("brBody"),rail=document.getElementById("rail");
   const card=(k,t)=>`<div class="dm"><div class="dm-k">${k}</div>${t}</div>`;
@@ -1162,7 +1186,7 @@ heroCards();initHero();renderHomeExtras();
     if(s===4){const j=JR[DM.jr];return card("Step 05 · See the journey",`<h3 class="dm-h">Compliance journey</h3><p class="dm-p">PlateWatch shows change over time rather than permanently labelling a restaurant. Drag or tap through the months.</p>
       <div class="dm-jr"><div class="pts">${JR.map((x,i)=>`<button class="pt" data-jr="${i}" aria-pressed="${i===DM.jr}"><span class="m">${x.m}</span><b${x.s==null?' class="pz-b"':""}>${x.s==null?"Paused":x.s}</b><i></i></button>`).join("")}</div>
       <input type="range" min="0" max="2" step="1" value="${DM.jr}" id="jrRange" aria-label="Month">
-      <div class="note"><b>${j.m.charAt(0)+j.m.slice(1,3).toLowerCase()} · ${j.s==null?"score paused":j.s+"/100"}.</b> ${j.n}</div></div>`)}
+      <div class="note"><b>${j.m.charAt(0)+j.m.slice(1,3).toLowerCase()} · ${j.s==null?"compliance score paused":j.s+"/100"}.</b> ${j.n}</div></div>`)}
     if(s===5)return card("Step 06 · Report something",`<h3 class="dm-h">Saw something concerning?</h3><p class="dm-p"><b style="color:var(--ink)">Demo — nothing will be submitted.</b></p>
       <form class="dm-form" id="dmRep">
         <div><label for="dr-area">Area</label><input id="dr-area" value="Fort, Mumbai"></div>
@@ -1193,7 +1217,7 @@ heroCards();initHero();renderHomeExtras();
     bind();
     if(focus){const sel=rail.querySelector('[aria-selected="true"]');if(sel&&sel.scrollIntoView&&innerWidth<=900)sel.scrollIntoView({block:"nearest",inline:"center"})}
   }
-  function syncJr(){const x=JR[DM.jr];body.querySelectorAll("[data-jr]").forEach(b=>b.setAttribute("aria-pressed",String(+b.dataset.jr===DM.jr)));const r=document.getElementById("jrRange");if(r)r.value=DM.jr;const n=body.querySelector(".dm-jr .note");if(n)n.innerHTML=`<b>${x.m.charAt(0)+x.m.slice(1,3).toLowerCase()} · ${x.s==null?"score paused":x.s+"/100"}.</b> ${x.n}`}
+  function syncJr(){const x=JR[DM.jr];body.querySelectorAll("[data-jr]").forEach(b=>b.setAttribute("aria-pressed",String(+b.dataset.jr===DM.jr)));const r=document.getElementById("jrRange");if(r)r.value=DM.jr;const n=body.querySelector(".dm-jr .note");if(n)n.innerHTML=`<b>${x.m.charAt(0)+x.m.slice(1,3).toLowerCase()} · ${x.s==null?"compliance score paused":x.s+"/100"}.</b> ${x.n}`}
   function goStep(n){DM.step=Math.max(0,Math.min(7,n));render(true)}
   function bind(){
     const f=document.getElementById("dmForm");
@@ -1228,7 +1252,7 @@ heroCards();initHero();renderHomeExtras();
   if("IntersectionObserver" in window){const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){typeDemo();io.disconnect()}}),{threshold:.4});io.observe(demo)}
 
   /* ---------- restaurant mini dashboard ---------- */
-  const NOTES=["Owners verify with their FSSAI licence number and a one-time code to the owner's phone.","27 requirements across 7 categories, based on public FSSAI hygiene parameters.","Photos, videos and PDFs, each dated. Evidence expires, so the profile stays live.","Owners are notified of every report and can reply publicly with evidence.","Our team reviews the evidence. Approved profiles show Platform verified."];
+  const NOTES=["Owners confirm ownership with their FSSAI licence number and a one-time code to the owner's phone.","27 requirements across 7 categories, based on public FSSAI hygiene parameters.","Photos, videos and PDFs, each dated. Evidence expires, so the profile stays live.","Owners are notified of every report and can reply publicly with evidence.","Our team reviews the evidence. Approved profiles show PlateWatch verified."];
   function rsDash(active){
     const id=3,r=D.find(x=>x.id===id),p=PROF[id],sc=scoreOf(id),ec=evCounts(id),nrep=REPORTS.filter(x=>x.rid===id&&RP.visibleToRestaurant(x)).length;
     document.getElementById("rsDash").innerHTML=`
@@ -1245,7 +1269,7 @@ heroCards();initHero();renderHomeExtras();
 
 
 
-renderSeg();renderList();syncAuthBtn();
+renderSeg();syncAuthBtn();
 {const t=parseHash(location.hash);if(t)go(t.p,t.arg,{fromHash:true});else history.replaceState(null,"","#home")}
 /* spot-check deadlines and countdowns run on the shared demo clock */
 setInterval(()=>{SCM.tick();document.querySelectorAll("[data-countdown]").forEach(el=>{el.textContent=SCM.left(+el.dataset.countdown)})},1000);
