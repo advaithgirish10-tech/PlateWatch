@@ -4,16 +4,15 @@
  *   It asks for 2–3 checkup items (critical items twice as likely, never repeating the previous check) with a code in every photo.
  * - Approved spot-check photos become fresh evidence and appear in the public kitchen gallery.
  * - Two misses in a row pause the "PlateWatch verified" badge until a spot check is answered on time and approved.
- * All photos in the seed are generated placeholders ("Sample photo"). Times run on the shared demo clock in bot.js.
+ * Not on the server yet: no checks are sent, and the dashboard says so. Times run on the shared demo clock in bot.js.
  */
 export function createSpotChecks(ctx){
-const {D,PROF,REQS,REQ,CAT,CATS,RP,esc,fmt,toast,aiFor,addEvidence,onChange}=ctx;
+const {PROF,REQS,REQ,CAT,CATS,RP,esc,fmt,toast,aiFor,addEvidence,onChange}=ctx;
 const HOUR=36e5,DAY=864e5,WINDOW=2*HOUR;
 const iso=ts=>new Date(ts).toISOString().slice(0,10);
 /* the demo clock stores the viewer's local time of day as UTC, so format in UTC */
 const fmtT=ts=>new Date(ts).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit",timeZone:"UTC"});
 const ownerPhone=rid=>PROF[rid].owner.replace(/\D/g,"");
-const place=rid=>D.find(r=>r.id===rid);
 
 /* what the owner is asked to show, per checkup item */
 const SHOW={k1:"food preparation area",k2:"food-contact surfaces",k3:"floors, walls and ceilings",k4:"covered waste bins",
@@ -80,7 +79,7 @@ function review(id,action,reason){
 function tick(){
   let changed=false;const t=RP.now();
   SC.forEach(c=>{if(c.status==="due"&&t>c.due){c.status="missed";changed=true;RP.notify(ownerPhone(c.rid),`Spot check ${c.code} was missed. It now shows on your public profile.`)}});
-  Object.keys(PROF).forEach(k=>{const rid=+k;if(NEXT[rid]==null)scheduleNext(rid);else if(t>=NEXT[rid]&&!openFor(rid)){send(rid);changed=true}});
+  /* no weekly checks are sent until the spot-check module exists on the server */
   if(changed)onChange();
 }
 const statusLabel=c=>c.status==="due"?"Due":c.status==="missed"&&!c.answeredAt?"Missed":c.review==="approved"?(c.status==="late"?"Late · approved":"Approved"):c.review==="rejected"?"Rejected":c.status==="late"?"Late":"Answered";
@@ -117,7 +116,7 @@ function bannerHTML(rid){
 }
 function historyHTML(rid){
   const l=listFor(rid).reverse();
-  if(!l.length)return `<p class="muted">No spot checks yet. Your first one arrives within a week.</p>`;
+  if(!l.length)return `<p class="muted">Weekly spot checks are coming soon. We'll tell you before the first one.</p>`;
   return `<ul class="sc-hist">${l.map(c=>`<li><span class="sc-h-d">${fmt(iso(c.sent))}</span><span class="sc-h-i">${esc(joinItems(c.items))}</span><span class="sc-st sc-st-${statusLabel(c).split(" ")[0].toLowerCase()}">${statusLabel(c)}</span></li>`).join("")}</ul>
     <p class="muted" style="font-size:13px;margin-top:10px">Next spot check: sometime in the coming week, between 10:00 and 21:00.</p>`;
 }
@@ -199,36 +198,6 @@ document.addEventListener("keydown",e=>{
   else if(e.key==="ArrowRight"){e.preventDefault();lbStep(1)}
   else if(e.key==="Tab"){const f=[$("glbPrev"),$("glbNext"),$("glbClose")].filter(x=>!x.disabled),i=f.indexOf(document.activeElement);if(e.shiftKey&&i<=0){e.preventDefault();f[f.length-1].focus()}else if(!e.shiftKey&&i===f.length-1){e.preventDefault();f[0].focus()}}
 });
-
-/* ---------- seed: Green Leaf Dhaba ---------- */
-/* neutral placeholder "photos" drawn as SVG; people=true adds a figure whose face region is blurred on screen */
-function samplePhoto(area,variant,people,code){
-  const shapes={
-    kitchen:`<rect x="0" y="380" width="800" height="220" fill="#CFCDC7"/><rect x="60" y="300" width="680" height="90" rx="6" fill="#B9B6AE"/><circle cx="220" cy="280" r="46" fill="#8E8B84"/><circle cx="360" cy="286" r="36" fill="#A5A29B"/><rect x="480" y="120" width="220" height="150" rx="6" fill="#DAD8D2"/>`,
-    storage:`<rect x="90" y="80" width="620" height="440" rx="8" fill="#D6D4CE"/>${[160,280,400].map(y=>`<rect x="110" y="${y}" width="580" height="10" fill="#9C998F"/>`).join("")}${[150,270,390,510].map((x,i)=>`<rect x="${x}" y="${i%2?100:220}" width="80" height="${i%2?60:60}" rx="6" fill="#ACA9A1"/>`).join("")}`,
-    personal:`<rect x="0" y="360" width="800" height="240" fill="#CFCDC7"/><rect x="120" y="220" width="220" height="160" rx="10" fill="#E3E1DC"/><ellipse cx="230" cy="300" rx="80" ry="40" fill="#B7B4AC"/><rect x="380" y="170" width="40" height="110" rx="8" fill="#9C998F"/>`,
-    clean:`<rect x="0" y="0" width="800" height="600" fill="#DEDCD6"/>${[0,1,2,3,4].map(i=>`<rect x="${80+i*130}" y="200" width="100" height="260" rx="6" fill="${i%2?"#B9B6AE":"#A9A69E"}"/>`).join("")}`};
-  const person=people?`<g fill="#77746D"><circle cx="560" cy="150" r="54"/><path d="M470 360c0-70 40-130 90-130s90 60 90 130z"/></g>`:"";
-  const paper=code?`<g transform="rotate(-4 150 470)"><rect x="70" y="430" width="200" height="80" fill="#FFFFFF" stroke="#8E8B84"/><text x="170" y="482" text-anchor="middle" font-family="monospace" font-size="30" fill="#0A0A0A">${code}</text></g>`:"";
-  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600"><rect width="800" height="600" fill="#E9E8E4"/>${shapes[area]||shapes.kitchen}${variant?`<rect x="0" y="0" width="800" height="600" fill="#000" opacity="${0.03*variant}"/>`:""}${person}${paper}<rect x="560" y="548" width="224" height="36" rx="6" fill="#0A0A0A" opacity=".75"/><text x="672" y="572" text-anchor="middle" font-family="sans-serif" font-size="18" fill="#FFFFFF">Sample photo</text></svg>`;
-  return "data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg);
-}
-(function seed(){
-  const rid=3;if(!PROF[rid])return;
-  const t=RP.now(),ago=d=>t-d*DAY,dateAgo=d=>iso(ago(d)),dayAt=(d,h)=>Math.floor(ago(d)/DAY)*DAY+h*HOUR;
-  const photo=(req,days,src,people,code,variant)=>addEvidence(rid,req,{name:`${req}-sample.jpg`,url:samplePhoto(REQ[req].cat,variant||0,people,code),ai:aiFor(req),date:dateAgo(days),src,people,sample:true});
-  /* 3 weeks ago: missed */
-  const m={id:SCID++,rid,code:newCode(),items:["p1","h1"],sent:dayAt(21,14),due:dayAt(21,16),status:"missed",review:null,photos:[],answeredAt:null,reason:null,flagCode:false};
-  /* 10 days ago: answered on time and approved */
-  const a={id:SCID++,rid,code:newCode(),items:["k2","s1"],sent:dayAt(10,11.5),due:dayAt(10,13.5),status:"answered",review:"approved",photos:[],answeredAt:dayAt(10,12.25),reason:null,flagCode:false};
-  SC.push(m,a);
-  photo("k2",10,"spot",false,a.code,1);photo("s1",10,"spot",false,a.code,0);
-  photo("k1",2,"checkup",false,null,0);photo("k3",40,"checkup",false,null,2);
-  photo("s2",25,"checkup",false,null,2);
-  photo("h1",5,"checkup",true,null,0);photo("h2",30,"checkup",true,null,1);
-  photo("c3",12,"checkup",false,null,0);
-  Object.keys(PROF).forEach(k=>scheduleNext(+k));
-})();
 
 return {send,addPhoto,review,tick,badge,pausedBadge,missedHTML,bannerHTML,historyHTML,galleryHTML,openChat,statusLabel,listFor,answerableFor,openFor,show,joinItems,fmtT,left,NEXT,SC,
   schedule:scheduleNext};

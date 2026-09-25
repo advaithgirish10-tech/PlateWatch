@@ -1,0 +1,32 @@
+# Local development: PostgreSQL with PostGIS, and SeaweedFS as an S3-compatible stand-in for Cloudflare R2.
+services:
+  db:
+    image: postgis/postgis:17-3.5-alpine
+    environment:
+      POSTGRES_USER: platewatch
+      # read from server/.env; only used when the database is first created (see server/README.md to change it later)
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-platewatch}
+      POSTGRES_DB: platewatch
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/create-test-db.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platewatch"]
+      interval: 2s
+      retries: 30
+
+  # only needed with STORAGE=s3; the default STORAGE=memory keeps files in the server process
+  storage:
+    image: chrislusf/seaweedfs:latest
+    command: server -dir=/data -s3 -s3.port=9000 -s3.config=/etc/seaweedfs/s3.json
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - s3data:/data
+      - ./scripts/seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+
+volumes:
+  pgdata:
+  s3data:

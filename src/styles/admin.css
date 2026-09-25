@@ -255,3 +255,6 @@ html.ad-lock{overflow:hidden}
 .ad-packet summary{cursor:pointer;font-size:14px;font-weight:500;width:fit-content}
 .ad-packet pre{margin:12px 0 0;padding:14px 16px;background:var(--ad-hover);border:1px solid var(--ad-line);border-radius:8px;font-family:var(--mono);font-size:12.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
 @media (max-width:760px){.ad-facts{grid-template-columns:minmax(0,1fr)}}
+
+/* tabs for modules that are not built yet */
+.ad-count.ad-soon{background:transparent;border:1px solid var(--rule);color:var(--grey);font-family:var(--mono);text-transform:uppercase;letter-spacing:.04em}

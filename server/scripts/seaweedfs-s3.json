@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "platewatch",
+      "credentials": [{ "accessKey": "platewatch", "secretKey": "platewatch-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

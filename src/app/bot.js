@@ -5,8 +5,10 @@
  * - Each verified number keeps its own thread, so status updates arrive as new bot messages.
  * All numbers, reports and outlets are fictional sample data held in memory.
  */
+import { api, uploadFile } from "./api.js";
+
 export function createReporting(ctx){
-const {D,REPORTS,S,esc,fmt,st,cur,toast,findPlaces,copyText,selectNode,TODAY,newId,loginAs,onChange}=ctx;
+const {REPORTS,S,esc,fmt,st,cur,toast,place:known,search,remember,copyText,selectNode,TODAY,newId,auth,onChange}=ctx;
 const AUTH="FDA Maharashtra";
 const DAY=864e5,HOUR=36e5;
 const todayISO=TODAY.toISOString().slice(0,10);
@@ -17,7 +19,8 @@ let skew=0;
 const now=()=>NOW0+(Date.now()-T0)+skew;
 /* demo only: move the shared clock forward (Admin → Spot checks → Skip 2 hours) */
 const advance=ms=>{skew+=ms};
-const place=rid=>D.find(r=>r.id===rid);
+/* restaurants the site already fetched from the API (the chat only reports on places it found through search or a profile) */
+const place=rid=>known(rid)||{id:rid,name:"This place",area:"",city:"",cat:"",lic:""};
 
 /* ---------- rules (editable in Admin → Escalation rules) ---------- */
 const ESC={stdCount:4,stdDays:7,fastCount:5,fastHours:48,newDays:7,newWeight:0.5,illNoteHours:72,illSecondDays:14,cooldownDays:60,perOutletDays:7,dailyLimit:5};
@@ -53,18 +56,6 @@ REPORTS.forEach(x=>{
   if(!x.ref)x.ref="PW-"+(4100+x.id);
   if(x.status==="verified"||x.status==="resolved"||x.status==="review")x.notified=true;
 });
-/* demo seeds: Coastal Tiffin Centre is one report short of the standard rule; Spice Route Kitchen one short of the fast lane */
-(function seed(){
-  const add=(rid,user,since,hoursAgo,cat,text,kinds)=>{USERS[user]={since};const id=newId(),ts=NOW0-hoursAgo*HOUR;
-    REPORTS.push({id,rid,text,cat,date:new Date(ts).toISOString().slice(0,10),ts,status:"accepted",photo:kinds.includes("photo"),evidence:kinds.map((k,i)=>({kind:k,name:`${k}-${id}-${i+1}.${k==="bill"?"pdf":"jpg"}`})),share:true,notified:true,flag:false,response:null,user,ref:"PW-"+(4100+id),channel:"whatsapp"})};
-  add(7,"9820011001","2026-03-02",26,"Pests","Cockroaches on the wall behind the serving counter.",["photo"]);
-  add(7,"9819922002","2026-01-15",70,"Hygiene","Staff handling food and cash without washing hands.",["photo","bill"]);
-  add(7,"9833033003","2025-11-20",118,"Stale or spoiled food","Chutney smelled sour and was served anyway.",["photo"]);
-  add(5,"9004400401","2026-09-21",2,"Pests","Rat seen near the delivery pickup shelf.",["photo"]);
-  add(5,"9004400402","2026-09-22",9,"Pests","Droppings next to the packed orders.",["photo"]);
-  add(5,"9004400403","2026-09-20",20,"Hygiene","Open drain beside the kitchen entrance.",["video"]);
-  add(5,"9867700404","2026-04-02",30,"Stale or spoiled food","Biryani delivered with a sour smell.",["photo","bill"]);
-})();
 
 /* ---------- reporter threads ---------- */
 const THREADS={};let anon=[];
@@ -125,9 +116,11 @@ function escalate(rid,rule,list){
   list.forEach(x=>notify(x.user,`Update on ${x.ref}: Your report${n?` and ${n} other${n===1?"":"s"}`:""} ${n?"were":"was"} sent to ${AUTH} on ${fmt(todayISO)}.`));
   return e;
 }
+/* outlets with reports in this visit */
+const outlets=()=>[...new Set(REPORTS.map(x=>x.rid).filter(Boolean))].map(place);
 function evaluate(){
   const made=[];
-  D.forEach(r=>{
+  outlets().forEach(r=>{
     const s=standard(r.id);
     if(s.list.length&&s.count>=ESC.stdCount&&allowed(r.id,s.list)){made.push(escalate(r.id,"Standard",s.list));return}
     const il=illness(r.id);
@@ -135,7 +128,7 @@ function evaluate(){
   });
   return made;
 }
-const urgentOutlets=()=>D.map(r=>({r,f:fastLane(r.id)})).filter(o=>o.f.urgent&&allowed(o.r.id,o.f.list));
+const urgentOutlets=()=>outlets().map(r=>({r,f:fastLane(r.id)})).filter(o=>o.f.urgent&&allowed(o.r.id,o.f.list));
 function confirmFast(rid){const f=fastLane(rid);if(!f.urgent)return null;return escalate(rid,"Fast lane",f.list)}
 function coordinatedFast(rid){const f=fastLane(rid);f.list.forEach(x=>markCoordinated(x));return f.list.length}
 /* when the tracker shows a new official action after an escalation, tell every reporter */
@@ -224,25 +217,43 @@ function start(opt){
   say("Hi, this is PlateWatch. Reporting a food-safety problem takes 30 seconds.");
   if(S.user){registerNumber(S.user.phone);afterVerify()}else verifyStep();
 }
+/* the number is confirmed with a real code from the PlateWatch API; this also signs the person in on the site */
 function verifyStep(){
-  say("First, confirm your number.");
-  say(`<span class="bm-hint">Demo tip: 98765 43210 is a sample number verified in June, so its reports count in full. Any valid number works.</span>`);
+  say("First, confirm your number. PlateWatch keeps it only to update you on your reports, and you can delete it anytime.");
   ask([],{placeholder:"10-digit mobile number",numeric:true,onText:v=>{
     const p=v.replace(/\D/g,"").replace(/^91(?=\d{10}$)/,"");
     if(!/^[6-9]\d{9}$/.test(p)){say("That doesn't look right. Send a 10-digit mobile number starting with 6, 7, 8 or 9.");return}
-    const code=String(Math.floor(100000+Math.random()*900000));
-    say(`We've sent a code to +91 ${p.slice(0,5)} ${p.slice(5)}. <span class="bm-hint">Demo — no SMS is sent. Your code is <b>${code}</b>.</span>`);
-    ask([{label:"Change number",fn:verifyStep}],{placeholder:"6-digit code",numeric:true,onText:c=>{
-      if(c.replace(/\D/g,"")!==code){say("That code doesn't match. Try again.");return}
-      const before=anon;anon=[];registerNumber(p);THREADS[p]=[...(THREADS[p]||[]),...before];loginAs(p);
-      say("Number confirmed. You're signed in on the PlateWatch site too.");afterVerify();
-    }});
+    sendCode(p);
   }});
 }
-function afterVerify(){
-  const p=phoneNow();
-  if(REPORTS.filter(x=>x.user===p&&x.date===todayISO).length>=ESC.dailyLimit){say("You've reached today's limit. Try again tomorrow.");end();return}
-  const more=REPORTS.filter(x=>x.user===p&&x.askMore&&x.status==="pending");
+const VIA={whatsapp:"on WhatsApp ",sms:"by SMS ",console:""};
+async function sendCode(p){
+  ask([],{placeholder:"Sending the code…"});
+  let r;
+  try{r=await auth.request(p)}
+  catch(e){say(esc(e.message));ask([{label:"Try again",fn:()=>sendCode(p)},{label:"Change number",fn:verifyStep}]);return}
+  say(`We've sent a code ${VIA[r.channel]||""}to +91 ${p.slice(0,5)} ${p.slice(5)}.${r.channel==="console"?' <span class="bm-hint">Development server: the code is printed in the API terminal.</span>':""}`);
+  ask([{label:"Change number",fn:verifyStep}],{placeholder:"6-digit code",numeric:true,onText:c=>checkCode(p,c)});
+}
+async function checkCode(p,c){
+  const before=anon;
+  try{await auth.verify(p,c.replace(/\D/g,""),true)}
+  catch(e){
+    say(esc(e.message));
+    if(e.code==="TOO_MANY_ATTEMPTS"||e.details.code==="CODE_EXPIRED")ask([{label:"Send a new code",fn:()=>sendCode(p)},{label:"Change number",fn:verifyStep}]);
+    return;
+  }
+  /* the chat so far moves into this number's thread */
+  anon=[];registerNumber(p);THREADS[p]=[...(THREADS[p]||[]),...before];
+  say("Number confirmed. You're signed in on the PlateWatch site too.");afterVerify();
+}
+/* the reporter's reports come from the API: today's count, and any a moderator wants more on */
+async function afterVerify(){
+  let mine=[];
+  try{mine=(await api("GET","/me/reports")).items}catch(_){/* the server checks the limits again when the report is sent */}
+  const today=new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"});
+  if(mine.filter(x=>x.date===today).length>=ESC.dailyLimit){say("You've reached today's limit. Try again tomorrow.");end();return}
+  const more=mine.filter(x=>x.askMore&&x.stage===0);
   if(more.length&&!C.rid&&!C.place){
     say("A moderator asked for more on one of your reports.");
     ask([...more.map(x=>({label:`Add to ${x.ref}`,fn:()=>addMore(x)})),{label:"New report",fn:placeStep}]);return;
@@ -264,29 +275,38 @@ function placeStep(){
   ask([{label:"Share location",echo:"📍 Location shared",fn:nearby},{label:"Send bill photo",file:{accept:"image/*,.pdf",kind:"bill"}},{label:"Type name",fn:()=>{say("Type the name of the place.");ask([],{placeholder:"Restaurant name",onText:nameSearch})}}],
     {placeholder:"Or type the name",onText:nameSearch,onFile:billFile});
 }
+const typeName=()=>{say("Type the name of the place.");ask([],{placeholder:"Restaurant name",onText:nameSearch})};
+/* distance in metres between two points */
+const metres=(a,b)=>{const R=6371e3,r=Math.PI/180,x=(b.lng-a.lng)*r*Math.cos((a.lat+b.lat)/2*r),y=(b.lat-a.lat)*r;return Math.round(Math.hypot(x,y)*R)};
+/* the three closest listed places to the phone's location, from the API */
 function nearby(){
-  const near=D.filter(r=>r.city==="Mumbai").slice(0,3),dist=["120 m","350 m","600 m"];
-  say("These are the nearest places I know:");
-  ask([...near.map((r,i)=>({label:`${r.name} · ${dist[i]}`,fn:()=>choose(r)})),{label:"None of these",fn:()=>{say("Type the name of the place.");ask([],{placeholder:"Restaurant name",onText:nameSearch})}}]);
+  ask([],{placeholder:"Finding places near you…"});
+  const fail=()=>{say("I couldn't get your location. Type the name instead.");ask([],{placeholder:"Restaurant name",onText:nameSearch})};
+  if(!navigator.geolocation){fail();return}
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    const me={lat:pos.coords.latitude,lng:pos.coords.longitude},d=0.02,f=v=>v.toFixed(5);
+    let items;
+    try{items=(await api("GET",`/restaurants?bbox=${f(me.lng-d)},${f(me.lat-d)},${f(me.lng+d)},${f(me.lat+d)}&limit=100`)).items}
+    catch(e){say(esc(e.message));typeName();return}
+    remember(items);
+    const near=items.filter(r=>r.location).map(r=>({r,m:metres(me,r.location)})).sort((a,b)=>a.m-b.m).slice(0,3);
+    if(!near.length){say("I couldn't find a listed place within about 2 km.");typeName();return}
+    say("These are the nearest places I know:");
+    ask([...near.map(({r,m})=>({label:`${r.name} · ${m<1000?Math.round(m/10)*10+" m":(m/1000).toFixed(1)+" km"}`,fn:()=>choose(r)})),{label:"None of these",fn:typeName}]);
+  },fail,{timeout:8000,maximumAge:60000});
 }
+/* the bill is kept as evidence; reading the licence number off it isn't built yet, so the name is typed */
 function billFile(f){
   addEvidence(f,"bill");
-  /* demo: read the "licence number" from the bill by matching a sample outlet */
-  const hit=D.find(r=>f.name.toLowerCase().includes(r.name.split(" ")[0].toLowerCase()))||D[f.name.length%D.length];
-  say(`Found licence ${hit.lic.slice(0,6)}…, that's <b>${esc(hit.name)}</b>, ${esc(hit.area)}. Correct?`);
-  ask([{label:"Yes",fn:()=>choose(hit)},{label:"No, choose another",fn:()=>{say("Type the name of the place.");ask([],{placeholder:"Restaurant name",onText:nameSearch})}}]);
+  say("Thanks, the bill is attached. Which place is it? Type its name.");
+  ask([],{placeholder:"Restaurant name",onText:nameSearch});
 }
-/* fuzzy match: substring hits first, then letter-pair similarity for typos */
-const grams=s=>{s=s.toLowerCase().replace(/[^a-z0-9]/g,"");const g=new Set();for(let i=0;i<s.length-1;i++)g.add(s.slice(i,i+2));return g};
-const sim=(a,b)=>{const A=grams(a),B=grams(b);if(!A.size||!B.size)return 0;let n=0;A.forEach(x=>{if(B.has(x))n++});return 2*n/(A.size+B.size)};
-function fuzzy(q){
-  const exact=findPlaces(q);
-  const near=D.filter(r=>!exact.includes(r)).map(r=>({r,s:Math.max(sim(q,r.name),...r.name.split(/\s+/).map(w=>sim(q,w)))})).filter(o=>o.s>=0.4).sort((a,b)=>b.s-a.s).map(o=>o.r);
-  return [...exact,...near].slice(0,3);
-}
-function nameSearch(q){
-  const m=fuzzy(q);
-  if(!m.length){say(`I couldn't find “${esc(q)}” on PlateWatch.`);ask([{label:"Not listed",fn:()=>{C.place={name:q,area:""};areaStep()}},{label:"Try again",fn:()=>{say("Type the name of the place.");ask([],{placeholder:"Restaurant name",onText:nameSearch})}}]);return}
+/* the API's search: substring and typo-tolerant matches, best first */
+async function nameSearch(q){
+  if(q.trim().length<2){say("Type at least two letters of the name.");return}
+  let m;
+  try{m=(await search(q.trim())).slice(0,3)}catch(e){say(esc(e.message));return}
+  if(!m.length){say(`I couldn't find “${esc(q)}” on PlateWatch.`);ask([{label:"Not listed",fn:()=>{C.place={name:q,area:""};areaStep()}},{label:"Try again",fn:typeName}]);return}
   say("Is it one of these?");
   ask([...m.map(r=>({label:`${r.name} · ${r.area}`,fn:()=>choose(r)})),{label:"Not listed",fn:()=>{say("What's the place called?");ask([],{placeholder:"Restaurant name",onText:n=>{C.place={name:n,area:""};areaStep()}})}}]);
 }
@@ -326,10 +346,23 @@ function confirmStep(){
   say("Can we share this with the restaurant and the food safety regulator? Your number stays private.");
   ask([{label:"Yes, send",fn:()=>save(true)},{label:"Keep private",fn:()=>save(false)}]);
 }
-function save(share){
+/* upload the files, send the report to the API, then keep a copy for this chat */
+async function save(share){
+  ask([],{placeholder:"Sending your report…"});
+  let res;
+  try{
+    const evidence=[];
+    for(const e of C.evidence){const uploadId=await uploadFile(e.file,"report");evidence.push(e.kind==="bill"||e.kind==="note"?{uploadId,kind:e.kind}:{uploadId})}
+    res=await api("POST","/reports",{...(C.rid?{restaurantId:C.rid}:{unlisted:{name:C.place.name,area:C.place.area}}),category:C.cat,...(C.line?{text:C.line}:{}),share,evidence});
+  }catch(e){
+    say(esc(e.message));
+    /* a limit or a repeat won't change on retry */
+    ask(e.status===409||e.status===429?[{label:"Done",fn:close}]:[{label:"Try again",fn:()=>save(share)},{label:"Cancel",fn:close}]);
+    return;
+  }
   const id=newId(),ts=now();
-  const x={id,rid:C.rid,place:C.rid?null:{...C.place},text:C.line||`${C.cat} reported.`,cat:C.cat,date:todayISO,ts,status:"pending",
-    photo:C.evidence.some(e=>e.kind==="photo"),evidence:C.evidence.map(e=>({kind:e.kind,name:e.name,ts})),share,flag:false,response:null,user:phoneNow(),ref:"PW-"+(4100+id),channel:"whatsapp"};
+  const x={id,apiId:res.id,rid:C.rid,place:C.rid?null:{...C.place},text:C.line||`${C.cat} reported.`,cat:C.cat,date:todayISO,ts,status:"pending",
+    photo:C.evidence.some(e=>e.kind==="photo"),evidence:C.evidence.map(e=>({kind:e.kind,name:e.name,ts})),share,flag:false,response:null,user:phoneNow(),ref:res.ref,channel:"whatsapp"};
   REPORTS.push(x);
   if(!hasEvidence(x))say("Thanks. Reports without a photo or bill can't be sent to the regulator, but they help us spot patterns.");
   if(!share)say("Kept private. It's used only to spot patterns and is never shared with the restaurant or the regulator.");
@@ -342,14 +375,25 @@ function copyComplaint(x){
   const t=complaintText(x);
   copyText(t,"Complaint copied",()=>{say(`<pre class="bm-pre" id="botPre">${esc(t)}</pre>`);selectNode(document.getElementById("botPre"))});
 }
+/* x is the API's report: add the file to it, and it goes back to the moderators */
 function addMore(x){
-  say(`Send the photo, video or bill for ${x.ref}.`);
-  ask(evButtons({label:"Cancel",fn:end}),{onFile:(f,k)=>{const e=addEvidence(f,k);x.evidence.push({kind:e.kind,name:e.name,ts:now()});x.photo=x.photo||e.kind==="photo";x.askMore=false;say(`Added to ${x.ref}. Our moderators will take another look.`);onChange();end()}});
+  say(`Send the photo, video or bill for ${esc(x.ref)}.`);
+  ask(evButtons({label:"Cancel",fn:end}),{onFile:async(f,k)=>{
+    const e=addEvidence(f,k);
+    ask([],{placeholder:"Sending…"});
+    try{
+      const uploadId=await uploadFile(f,"report");
+      await api("POST",`/reports/${x.id}/evidence`,{evidence:[e.kind==="bill"||e.kind==="note"?{uploadId,kind:e.kind}:{uploadId}]});
+      say(`Added to ${esc(x.ref)}. Our moderators will take another look.`);
+    }catch(err){say(esc(err.message))}
+    onChange();end();
+  }});
 }
 function addEvidence(f,kind){
   kind=kind||(f.type.startsWith("video/")?"video":f.type==="application/pdf"?"bill":"photo");
   let url=null;if(f.type.startsWith("image/")){try{url=URL.createObjectURL(f)}catch(_){}}
-  const e={kind,name:f.name,url};C.evidence=C.evidence||[];C.evidence.push(e);
+  /* the File itself is kept: it's uploaded when the report is sent */
+  const e={kind,name:f.name,url,file:f};C.evidence=C.evidence||[];C.evidence.push(e);
   me(url?`<img class="bm-img" src="${url}" alt="Attached ${KIND[kind]}"><span class="bm-file">${esc(KIND[kind])} · ${esc(f.name)}</span>`:`<span class="bm-file">📄 ${esc(KIND[kind])} · ${esc(f.name)}</span>`);
   return e;
 }

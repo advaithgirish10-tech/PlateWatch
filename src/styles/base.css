@@ -177,6 +177,7 @@ textarea.input{resize:vertical}
 
 /* LOGIN */
 .auth{display:grid;grid-template-columns:1fr 1fr;min-height:calc(100vh - 100px)}
+.auth>*{min-width:0}
 .auth .art{background:var(--ink);color:var(--paper);padding:clamp(32px,5vw,64px);display:flex;flex-direction:column;justify-content:space-between;gap:40px;overflow:hidden;position:relative}
 .auth .art .h-big{color:var(--paper)}
 .auth .art ul{list-style:none;padding:0;margin:0;display:grid;gap:14px}

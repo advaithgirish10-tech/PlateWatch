@@ -1,46 +1,38 @@
 /*
- * PlateWatch app logic: router, tracker, profiles, OTP login, restaurant
- * dashboard, admin queue, homepage, About and the How-it-works demo.
- * Ported unchanged from the prototype. It drives the DOM rendered by App.jsx.
- * All data is fictional sample data held in memory (resets on reload).
+ * PlateWatch app logic: router, tracker, profiles, OTP login, restaurant dashboard, homepage, About and How it works.
+ * It drives the DOM rendered by App.jsx. Restaurants, accounts, claims, the dashboard, reports and admin all come
+ * from the API (api.js). Only the homepage illustrations and the How-it-works demo use the fixed sample records below.
  * QRCode is a global loaded in index.html (qrcodejs 1.0.0).
  */
 /* global QRCode */
+import { api, localPhone, uploadFile } from "./api.js";
+import { createAdmin } from "./admin.js";
 import { createReporting } from "./bot.js";
 import { createSpotChecks } from "./spotcheck.js";
-import { createMap, COORDS, EXTRA_PLACES, EXTRA_CLAIMED, EXTRA_VERIFIED } from "./map.js";
+import { createMap, dotHTML, badgeHTML, badgeLabel, pausedNote, legendHTML } from "./map.js";
 export function initApp() {
 const TYPES={sus:["Suspended","st-sus",""],rev:["Revoked","st-rev",""],imp:["Improvement notice","st-imp",""],ok:["Reinstated","st-ok",""],none:["No official action","st-none",""]};
-const D=[
- {id:1,name:"Harbour Lane Café",area:"Fort",city:"Mumbai",cat:"Café",lic:"11526998000101",verified:"2026-09-22",hist:[["2026-09-16","sus","Raw and cooked food stored together; blocked drainage near kitchen"]]},
- {id:2,name:"Shree Mithai Bhandar",area:"Malad West",city:"Mumbai",cat:"Sweet shop",lic:"11524011000233",verified:"2026-09-22",hist:[["2026-09-21","sus","Pest activity in storage room; expired raw material on premises"]]},
- {id:3,name:"Green Leaf Dhaba",area:"Hinjewadi",city:"Pune",cat:"Dhaba",lic:"11525017000418",verified:"2026-09-20",hist:[["2026-08-02","imp","Food handlers without medical certificates; no pest control records"],["2026-09-21","ok","Compliance confirmed on re-inspection"]]},
- {id:4,name:"QuickCart Dark Store 14",area:"Andheri East",city:"Mumbai",cat:"Dark store",lic:"10025022000561",verified:"2026-09-19",hist:[["2026-08-14","sus","Rodent droppings in dry storage"],["2026-09-10","ok","Licence restored after corrective action"]]},
- {id:5,name:"Spice Route Kitchen",area:"Thane West",city:"Thane",cat:"Cloud kitchen",lic:"11524033000702",verified:"2026-09-21",hist:[["2026-09-18","imp","No separation of veg and non-veg prep areas"]]},
- {id:6,name:"Royal Farsan Works",area:"Shil-Diva",city:"Thane",cat:"Manufacturer",lic:"11524099000815",verified:"2026-09-18",hist:[["2026-07-20","imp","Reused cooking oil beyond permitted limit"],["2026-09-09","rev","Repeat violations; licence revoked"]]},
- {id:7,name:"Coastal Tiffin Centre",area:"Dadar West",city:"Mumbai",cat:"Restaurant",lic:"11526012000944",verified:"2026-09-22",hist:[["2026-09-20","sus","Stagnant water near cold storage; insect infestation"]]},
- {id:8,name:"Orange City Bakers",area:"Sitabuldi",city:"Nagpur",cat:"Bakery",lic:"11524055001027",verified:"2026-08-15",hist:[["2026-08-10","imp","Unlabelled ingredients; missing batch records"]]},
- {id:9,name:"Deccan Dosa House",area:"Kothrud",city:"Pune",cat:"Restaurant",lic:"11525019001133",verified:"2026-09-21",hist:[["2026-09-17","sus","Cockroach infestation in kitchen and prep area"]]},
- {id:10,name:"Marine Drive Grill",area:"Churchgate",city:"Mumbai",cat:"Restaurant",lic:"11526003001248",verified:"2026-09-12",hist:[["2026-06-11","sus","Improper refrigeration; spoiled stock found"],["2026-07-02","ok","Licence restored after re-inspection"]]},
- {id:11,name:"Annapurna Dairy Products",area:"Mahape MIDC",city:"Navi Mumbai",cat:"Manufacturer",lic:"10024045001356",verified:"2026-09-22",hist:[["2026-09-19","sus","Suspected adulterants seized; samples sent for testing"]]},
- {id:12,name:"Temple Road Prasad Stall",area:"Shirdi",city:"Ahilyanagar",cat:"Sweet shop",lic:"21524088001471",verified:"2026-08-30",hist:[["2026-06-18","rev","Adulterated peda seized and destroyed"]]},
- {id:13,name:"Bandra Bao Co.",area:"Bandra West",city:"Mumbai",cat:"Café",lic:"11526027001589",verified:"2026-09-22",hist:[["2026-09-22","imp","Pest-control certificate expired; water test report missing"]]},
- {id:14,name:"Andheri Chaat Corner",area:"Andheri West",city:"Mumbai",cat:"Restaurant",lic:"11526031001694",verified:"2026-09-21",hist:[["2026-09-12","imp","Uncovered food on display; no handwash station"]]}
+/* fictional records for the homepage illustrations only (hero cards, previews, How it works); never shown as real data */
+const SAMPLE=[
+ {id:1,name:"Harbour Lane Café",area:"Fort",city:"Mumbai",cat:"Café",hist:[["2026-09-16","sus","Raw and cooked food stored together; blocked drainage near kitchen"]]},
+ {id:3,name:"Green Leaf Dhaba",area:"Hinjewadi",city:"Pune",cat:"Dhaba",hist:[["2026-08-02","imp","Food handlers without medical certificates; no pest control records"],["2026-09-21","ok","Compliance confirmed on re-inspection"]]}
 ];
-/* sample coordinates for the map, plus fictional Mumbai places with no official action on record */
-D.forEach(r=>{if(COORDS[r.id])r.ll=COORDS[r.id]});
-D.push(...EXTRA_PLACES);
-const TODAY=new Date("2026-09-23");
-/* places with no official action get a "none" entry instead of a history item */
-const NONE=["","none","No official action on record"];
-const cur=r=>r.hist[r.hist.length-1]||NONE;
+const SAMPLE_GREEN=SAMPLE[1];
+/* today in India; evidence ages and expiry count from here */
+const TODAY=new Date(new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"}));
+const cur=r=>r.hist[r.hist.length-1];
 const fmt=s=>new Date(s).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});
 const st=t=>`<span class="st ${TYPES[t][1]}"><i>${TYPES[t][2]}</i>${TYPES[t][0]}</span>`;
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const byNew=(a,b)=>cur(b)[0].localeCompare(cur(a)[0]);
+
+/* restaurants the site has fetched from the API, by id: names for Back buttons, the chat and claims.
+   cat and lic are the short names the older code (chat, claims) uses. */
+const PLACES=new Map();
+const remember=list=>list.forEach(r=>PLACES.set(r.id,{...PLACES.get(r.id),...r,cat:r.category,lic:r.licenceNumber}));
+const place=id=>PLACES.get(id);
 
 /* app state (in memory) */
-const S={q:"",city:"",type:"",sort:"new",user:null,follows:new Set([7,13]),areas:["Dadar West"],after:null};
+const S={q:"",city:"",type:"",sort:"new",user:null,follows:new Set(),areas:[],after:null};
 
 /* toast */
 let tt;function toast(m){const t=document.getElementById("toast");t.textContent=m;t.hidden=false;clearTimeout(tt);tt=setTimeout(()=>t.hidden=true,2800)}
@@ -53,16 +45,19 @@ const PAGE_NAME={home:"Home",tracker:"Tracker",report:"Report",verify:"How it wo
 const hashFor=(p,arg)=>p==="detail"?"profile-"+arg:PAGE_HASH[p];
 function parseHash(h){
   h=(h||"").replace(/^#/,"");
-  const m=h.match(/^profile-(\d+)$/);if(m)return D.some(r=>r.id===+m[1])?{p:"detail",arg:+m[1]}:null;
+  /* any profile number is accepted here; the profile page says so if it doesn't exist */
+  const m=h.match(/^profile-(\d+)$/);if(m)return {p:"detail",arg:+m[1]};
   if(h==="tracker-map")return {p:"tracker"};   /* old link: the tracker is the map now */
   const p=Object.keys(PAGE_HASH).find(k=>PAGE_HASH[k]===h);return p?{p}:null;
 }
 S.page={p:"home"};S.stack=[];
 /* where a profile's Back button should go: the last page visited that isn't login or this same profile */
 function backTarget(id){for(let i=S.stack.length-1;i>=0;i--){const e=S.stack[i];if(e.p==="login"||(e.p==="detail"&&e.arg===id))continue;return e}return {p:"tracker"}}
-const pageName=e=>e.p==="detail"?D.find(r=>r.id===e.arg).name:PAGE_NAME[e.p];
+const pageName=e=>e.p==="detail"?(place(e.arg)?place(e.arg).name:"restaurant"):PAGE_NAME[e.p];
 function go(p,arg,opt){
   if(p==="account"&&!S.user){S.after="account";p="login"}
+  /* staff only: signed-out visitors log in first, everyone else goes home */
+  if(p==="admin"&&!isAdmin()){if(!S.user){S.after="admin";p="login"}else{toast("That page is for PlateWatch staff only.");p="home";arg=undefined}}
   if(p==="dash"&&S.owner==null)p="biz";
   if(p==="biz"&&S.owner!=null&&arg==null){p="dash";arg="overview"}
   const prev=S.page;if(!(prev.p===p&&prev.arg===arg)){S.stack.push(prev);if(S.stack.length>40)S.stack.shift()}
@@ -78,53 +73,53 @@ function go(p,arg,opt){
   if(p==="account")renderAccount();
   if(p==="tracker")renderTracker();
   if(p==="biz")renderBiz(arg);
-  if(p==="dash")renderDash(arg||"overview");
-  if(p==="admin")renderAdmin(arg||"verify");
+  if(p==="dash")openDash(arg||"overview");
+  if(p==="admin")ADM.show(arg||"verify");
   window.scrollTo(0,0);
 }
 addEventListener("hashchange",()=>{
   const h=location.hash.slice(1);if(h===hashFor(S.page.p,S.page.arg))return;
-  const t=parseHash(h);if(t)go(t.p,t.arg,{fromHash:true});
+  const t=parseHash(h);go(t?t.p:"home",t&&t.arg,{fromHash:true});
 });
 document.addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(b){e.preventDefault();go(b.dataset.go)}});
 document.getElementById("menuBtn").onclick=e=>{const d=document.getElementById("drawer");d.hidden=!d.hidden;e.currentTarget.setAttribute("aria-expanded",String(!d.hidden))};
 document.getElementById("authBtn").onclick=()=>{if(S.user){go("account");return}S.after="account";go("login")};
-function syncAuthBtn(){const b=document.getElementById("authBtn");b.textContent=S.user?"My alerts":"Log in"}
+/* the role comes from the API session; admin links only show for staff, and a signed-out admin leaves the page */
+const isAdmin=()=>!!S.user&&S.user.role==="admin";
+function syncAuthBtn(){
+  document.getElementById("authBtn").textContent=S.user?"My alerts":"Log in";
+  document.querySelectorAll("[data-staff]").forEach(el=>el.hidden=!isAdmin());
+  if(!isAdmin()&&S.page&&S.page.p==="admin")go("home");
+}
 
 
 /* ---------- FLOW FIXES: shared helpers ---------- */
-const AUTH="FDA Maharashtra";
-const PRIOR={sus:"a suspension",rev:"a revocation",imp:"an improvement notice"};
-/* one plain-language sentence from the latest official action, no verdicts */
-function summaryLine(r){
-  const c=r.hist.length?cur(r):null;
-  if(!c)return `No official action on record as of ${fmt(r.verified)}. This is not a guarantee of hygiene.`;
-  if(c[1]==="sus")return `Licence suspended by ${AUTH} on ${fmt(c[0])}. Not reinstated as of ${fmt(r.verified)}.`;
-  if(c[1]==="rev")return `Licence revoked by ${AUTH} on ${fmt(c[0])}.`;
-  if(c[1]==="imp")return `Improvement notice issued on ${fmt(c[0])}. Follow-up pending.`;
-  const pv=r.hist[r.hist.length-2];
-  return pv?`Licence reinstated on ${fmt(c[0])} after ${PRIOR[pv[1]]||"an earlier action"} on ${fmt(pv[0])}.`:`Licence reinstated on ${fmt(c[0])}.`;
-}
-/* the PlateWatch score is never shown publicly while an official action is open */
-const paused=rid=>{const r=D.find(x=>x.id===rid);return !!r&&r.hist.length>0&&["sus","rev","imp"].includes(cur(r)[1])};
+/* the PlateWatch score is never shown publicly while an official action is open (the API says so per restaurant) */
+const paused=rid=>!!(PROF[rid]&&PROF[rid].pausedPublicly);
 const pausedHTML=()=>`<div class="pz"><p class="pz-t">Compliance score paused while an official action is open.</p><details class="pz-why"><summary>Why?</summary><p>Our compliance score measures submitted evidence. It never overrides an official finding.</p></details></div>`;
 function pubScore(rid,n){return paused(rid)?pausedHTML():`<div class="score">${n}<small>/100</small></div>`}
 const progHTML=(done,tot)=>`<div class="prog"><div class="prog-l"><b>${done} of ${tot}</b> requirements met</div><span class="prog-t" aria-hidden="true"><i style="width:${tot?Math.round(done/tot*100):0}%"></i></span></div>`;
 
-/* instant search: combobox + listbox, shared by home, tracker and the report form */
-function findPlaces(q){q=q.trim().toLowerCase();if(!q)return [];
-  return D.filter(r=>(r.name+" "+r.area+" "+r.city+" "+r.cat+" "+r.lic).toLowerCase().includes(q))
-    .sort((a,b)=>(b.name.toLowerCase().startsWith(q)-a.name.toLowerCase().startsWith(q))||a.name.localeCompare(b.name));}
+/* instant search: combobox + listbox, shared by home and tracker; suggestions come from the API's search */
+const searchAPI=q=>api("GET","/search?q="+encodeURIComponent(q)).then(d=>{remember(d.items);return d.items});
 function attachSuggest(input,panel,{onPick,noResults}){
-  const wrap=panel.parentNode,lb=panel.id+"-lb";let items=[],act=-1,open=false;
+  const wrap=panel.parentNode,lb=panel.id+"-lb";let items=[],act=-1,open=false,seq=0,timer=null;
   input.setAttribute("role","combobox");input.setAttribute("aria-autocomplete","list");input.setAttribute("aria-expanded","false");input.setAttribute("aria-controls",lb);
   const close=()=>{open=false;panel.hidden=true;items=[];act=-1;input.setAttribute("aria-expanded","false");input.removeAttribute("aria-activedescendant")};
-  const draw=()=>{
-    const q=input.value.trim();if(!q){close();return}
-    items=findPlaces(q).slice(0,6);act=-1;input.removeAttribute("aria-activedescendant");
+  const show=(q,list)=>{
+    items=list.slice(0,6);act=-1;input.removeAttribute("aria-activedescendant");
     if(!items.length){input.setAttribute("aria-expanded","false");if(!noResults){close();return}panel.innerHTML=noResults(q);panel.hidden=false;open=true;return}
-    panel.innerHTML=`<ul role="listbox" id="${lb}" aria-label="Matching restaurants">${items.map((r,i)=>`<li role="option" id="${lb}-${i}" data-sid="${r.id}" aria-selected="false"><span class="sg-main"><span class="sg-n">${MAP.dotHTML(r)}<span>${esc(r.name)}</span>${MAP.badgeHTML(r.id)}</span><span class="sg-a">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</span></span>${st(cur(r)[1])}</li>`).join("")}</ul>`;
+    panel.innerHTML=`<ul role="listbox" id="${lb}" aria-label="Matching restaurants">${items.map((r,i)=>`<li role="option" id="${lb}-${i}" data-sid="${r.id}" aria-selected="false"><span class="sg-main"><span class="sg-n">${dotHTML(r.dot)}<span>${esc(r.name)}</span>${badgeHTML(r.badge)}</span><span class="sg-a">${esc(r.area)}, ${esc(r.city)} · ${esc(r.category)}</span></span>${st(r.status||"none")}</li>`).join("")}</ul>`;
     panel.hidden=false;open=true;input.setAttribute("aria-expanded","true");
+  };
+  /* two characters or more; typing quickly sends one request, and a slow old answer never replaces a newer one */
+  const draw=()=>{
+    clearTimeout(timer);const q=input.value.trim();if(q.length<2){close();return}
+    timer=setTimeout(async()=>{
+      const my=++seq;let list;
+      try{list=await searchAPI(q)}catch(err){if(my===seq){items=[];panel.innerHTML=`<div class="nores"><p>${esc(err.message)}</p></div>`;panel.hidden=false;open=true}return}
+      if(my===seq&&input.value.trim()===q)show(q,list);
+    },150);
   };
   const mark=()=>{panel.querySelectorAll("[role=option]").forEach((o,i)=>o.setAttribute("aria-selected",String(i===act)));
     if(act<0){input.removeAttribute("aria-activedescendant");return}
@@ -139,7 +134,7 @@ function attachSuggest(input,panel,{onPick,noResults}){
     else if(e.key==="Escape"){if(open){e.preventDefault();close()}}
   });
   panel.addEventListener("mousedown",e=>{if(e.target.closest("[role=option]"))e.preventDefault()});
-  panel.addEventListener("click",e=>{const o=e.target.closest("[data-sid]");if(o)pick(D.find(x=>x.id===+o.dataset.sid))});
+  panel.addEventListener("click",e=>{const o=e.target.closest("[data-sid]");if(o)pick(items.find(x=>x.id===+o.dataset.sid))});
   document.addEventListener("pointerdown",e=>{if(open&&!wrap.contains(e.target))close()});
   wrap.addEventListener("focusout",e=>{if(open&&e.relatedTarget&&!wrap.contains(e.relatedTarget))close()});
   return {close};
@@ -147,13 +142,16 @@ function attachSuggest(input,panel,{onPick,noResults}){
 /* shown wherever a search finds nothing */
 const noResHTML=q=>`<div class="nores"><p><b>Nothing on record for “${esc(q)}”.</b> This is not a guarantee of hygiene.</p>
   <div class="nores-acts"><button type="button" class="pillbtn sm" data-nr="report" data-q="${esc(q)}">Report a problem</button><button type="button" class="pillbtn out sm" data-nr="exists" aria-expanded="false">Tell us this place exists</button></div>
-  <form class="nr-form" hidden><div><label>Name<input class="input" name="nm" required value="${esc(q)}"></label></div><div><label>Area<input class="input" name="ar" required placeholder="e.g. Dadar West"></label></div><div><button class="pillbtn sm" type="submit">Send</button></div></form></div>`;
+  <form class="nr-form" hidden><div><label>Name<input class="input" name="nm" required minlength="2" maxlength="120" value="${esc(q)}"></label></div><div><label>Area<input class="input" name="ar" required minlength="2" maxlength="120" placeholder="e.g. Dadar West"></label></div><div><button class="pillbtn sm" type="submit">Send</button></div></form></div>`;
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-nr]");if(!b)return;
   if(b.dataset.nr==="report"){RP.open({name:b.dataset.q});return}
   const f=b.closest(".nores").querySelector(".nr-form");f.hidden=!f.hidden;b.setAttribute("aria-expanded",String(!f.hidden));if(!f.hidden)f.querySelector("[name=ar]").focus();
 });
-document.addEventListener("submit",e=>{const f=e.target.closest(".nr-form");if(!f)return;e.preventDefault();toast("Thanks, we'll check it");f.hidden=true;f.reset();const b=f.closest(".nores").querySelector('[data-nr="exists"]');if(b)b.setAttribute("aria-expanded","false")});
+/* "Tell us this place exists" goes to staff as a place suggestion */
+document.addEventListener("submit",async e=>{const f=e.target.closest(".nr-form");if(!f)return;e.preventDefault();
+  try{await api("POST","/place-suggestions",{name:f.nm.value.trim(),area:f.ar.value.trim()});toast("Thanks, we'll check it")}catch(err){toast(err.message);return}
+  f.hidden=true;f.reset();const b=f.closest(".nores").querySelector('[data-nr="exists"]');if(b)b.setAttribute("aria-expanded","false")});
 /* clipboard with a select-the-text fallback */
 function copyText(text,okMsg,fallback){
   const fail=()=>{fallback();toast("Press copy to finish")};
@@ -161,20 +159,25 @@ function copyText(text,okMsg,fallback){
 }
 function selectNode(el){const s=getSelection(),g=document.createRange();g.selectNodeContents(el);s.removeAllRanges();s.addRange(g)}
 
-/* home */
-const cnt=t=>D.filter(r=>cur(r)[1]===t).length;
-const everImp=D.filter(r=>r.hist.some(h=>h[1]==="imp")).length;
-document.getElementById("numbers").innerHTML=[[D.length,"Food establishments tracked"],[everImp,"Improvement notices logged"],[cnt("sus"),"Licences suspended"],[new Set(D.map(r=>r.city)).size,"Cities and counting"]].map(([n,l])=>`<div><b>${n}</b><span>${l}</span></div>`).join("")+`<div class="smp">Prototype · counts from fictional sample records</div>`;
-const latest=D.filter(r=>r.hist.length).sort(byNew);
-const tick=latest.slice(0,10).map(r=>{const c=cur(r);return `<span class="it"><span class="dot d-${c[1]}"></span><b>${esc(r.name)}</b><span>${c[1]==="ok"?"Cleared":TYPES[c[1]][0]}</span><span class="m">${esc(r.area)} · ${fmt(c[0])}</span></span>`}).join("");
-document.getElementById("ticker").innerHTML=tick+tick;
+/* home: the numbers and the ticker of latest official actions come from the API */
+async function loadHome(){
+  const numbers=document.getElementById("numbers"),ticker=document.getElementById("ticker");
+  const render=s=>[[s&&s.tracked,"Food establishments tracked"],[s&&s.improvementNotices,"Improvement notices logged"],[s&&s.suspended,"Licences suspended"],[s&&s.cities,"Cities and counting"]].map(([n,l])=>`<div><b>${n==null?"—":n}</b><span>${l}</span></div>`).join("");
+  numbers.innerHTML=render(null);
+  try{
+    const [s,latest]=await Promise.all([api("GET","/stats"),api("GET","/actions/latest?limit=10")]);
+    numbers.innerHTML=render(s);
+    const tick=latest.items.map(a=>`<span class="it"><span class="dot d-${a.type}"></span><b>${esc(a.name)}</b><span>${a.type==="ok"?"Cleared":TYPES[a.type][0]}</span><span class="m">${esc(a.area)} · ${fmt(a.actionOn)}</span></span>`).join("");
+    ticker.innerHTML=tick+tick;
+  }catch(_){/* the numbers stay as dashes; browsing still works */}
+}
 document.getElementById("homeSearch").onsubmit=e=>{e.preventDefault();S.q=document.getElementById("homeQ").value;document.getElementById("q").value=S.q;S.pendingSearch=S.q;go("tracker")};
 attachSuggest(document.getElementById("homeQ"),document.getElementById("homeSug"),{onPick:r=>go("detail",r.id),noResults:noResHTML});
 attachSuggest(document.getElementById("finalQ"),document.getElementById("finalSug"),{onPick:r=>go("detail",r.id),noResults:noResHTML});
 document.querySelectorAll("[data-try]").forEach(b=>b.onclick=()=>{S.q=b.dataset.try;document.getElementById("q").value=S.q;go("tracker")});
 
 /* tracker */
-[...new Set(D.map(r=>r.city))].sort().forEach(c=>{const o=document.createElement("option");o.value=c;o.textContent=c;document.getElementById("city").append(o)});
+api("GET","/cities").then(d=>d.items.forEach(c=>{const o=document.createElement("option");o.value=c;o.textContent=c;document.getElementById("city").append(o)}),()=>{});
 const segDefs=[["","All"],["red","Suspended or revoked"],["amber","Improvement notice"],["green","Reinstated"],["grey","No official action"]];
 const verDefs=[["","All"],["verified","PlateWatch verified"],["claimed","Claimed"],["none","Not claimed yet"]];
 S.ver="";
@@ -184,64 +187,18 @@ function renderSeg(){
 }
 document.getElementById("seg").onclick=e=>{const b=e.target.closest("button");if(!b)return;S.type=b.dataset.v;renderSeg();applyFilters()};
 document.getElementById("segVer").onclick=e=>{const b=e.target.closest("button");if(!b)return;S.ver=b.dataset.ver;renderSeg();applyFilters()};
-function filtered(){
-  const q=S.q.trim().toLowerCase();
-  const rows=D.filter(r=>(!q||(r.name+" "+r.area+" "+r.city+" "+r.cat+" "+r.lic).toLowerCase().includes(q))&&(!S.city||r.city===S.city)&&(!S.type||MAP.dotOf(r)===S.type)&&(!S.ver||MAP.badgeOf(r.id)===S.ver));
-  return rows.sort(S.sort==="new"?byNew:(a,b)=>-byNew(a,b));
-}
 function applyFilters(){if(S.page.p==="tracker")MAP.refresh()}
 /* the Tracker is the map: filters, legend, then the map with its results panel */
 function renderTracker(){
-  document.getElementById("dotLegend").innerHTML=MAP.legendHTML();
+  document.getElementById("dotLegend").innerHTML=legendHTML();
   MAP.show().then(()=>{if(S.pendingSearch){const q=S.pendingSearch;S.pendingSearch=null;MAP.searchGo(q)}});
 }
 document.getElementById("q").oninput=e=>{S.q=e.target.value;applyFilters()};
-attachSuggest(document.getElementById("q"),document.getElementById("qSug"),{onPick:r=>MAP.focusPlace(r.id)});
+attachSuggest(document.getElementById("q"),document.getElementById("qSug"),{onPick:r=>MAP.focusPlace(r.id,r)});
 /* Enter with no suggestion selected: fly to the best match, or fit an area */
 document.getElementById("q").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.defaultPrevented){e.preventDefault();MAP.searchGo(S.q)}});
 document.getElementById("city").onchange=e=>{S.city=e.target.value;applyFilters()};
 document.getElementById("sort").onchange=e=>{S.sort=e.target.value;applyFilters()};
-
-/* detail (v2, superseded by renderDetail below) */
-function renderDetailV2(id){
-  const r=D.find(x=>x.id===id),c=cur(r);
-  const stale=(TODAY-new Date(r.verified))/864e5>30;
-  const f=S.follows.has(id);
-  document.getElementById("detail").innerHTML=`
-  <button class="back" id="back">← Back to tracker</button>
-  <div class="dhead">
-    <div>${st(c[1])}<h1 class="h-big" style="margin-top:16px">${esc(r.name)}</h1><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</div></div>
-    <button class="pillbtn ${f?"out":""}" id="followBtn">${f?"✓ Following":"Follow for alerts"}</button>
-  </div>
-  <div class="dgrid">
-    <div>
-      <div class="facts">
-        <div><div class="k">Status</div><div class="v">${TYPES[c[1]][0]} since ${fmt(c[0])}</div></div>
-        <div><div class="k">FSSAI licence</div><div class="v" style="font-family:var(--mono)">${r.lic}</div></div>
-        <div><div class="k">Last verified</div><div class="v">${fmt(r.verified)}${stale?"<br><span class='st st-imp' style='margin-top:6px'>Status unverified</span>":""}</div></div>
-      </div>
-      <h2 class="h-mid">History</h2>
-      <ol class="tl">${[...r.hist].reverse().map(h=>`<li><span class="dot"></span><div><div class="dt">${fmt(h[0])}</div>${st(h[1])}<p>${esc(h[2])}</p></div></li>`).join("")}</ol>
-    </div>
-    <div class="side">
-      <div><h3>Sources</h3><div class="srcl"><span>FDA Maharashtra press release <em>OFFICIAL · SAMPLE</em></span><span>Regional daily report <em>NEWS · SAMPLE</em></span></div><p class="muted" style="margin-top:10px">Live entries link to the original release and articles.</p></div>
-      <div><h3>Something wrong here?</h3><p class="muted" style="margin:0 0 14px">Owners and readers can request a correction. We reply within 48 hours.</p>
-        <form class="form" id="cform">
-          <label for="c-role">You are</label><select class="input" id="c-role"><option>The business owner</option><option>A customer</option><option>Other</option></select>
-          <label for="c-msg">What needs fixing</label><textarea class="input" id="c-msg" rows="3" required placeholder="e.g. Licence restored on 20 Sep, re-inspection order attached"></textarea>
-          <div style="margin-top:8px"><button class="pillbtn" type="submit">Send correction request</button></div>
-          <div id="cmsg" class="note" hidden></div>
-        </form></div>
-    </div>
-  </div>`;
-  document.getElementById("back").onclick=()=>go("tracker");
-  document.getElementById("followBtn").onclick=()=>{
-    if(!S.user){S.after={follow:id};toast("Log in with your number to get alerts");go("login");return}
-    S.follows.has(id)?S.follows.delete(id):S.follows.add(id);
-    toast(S.follows.has(id)?"Following. We'll WhatsApp you on any change.":"Unfollowed");renderDetail(id);
-  };
-  document.getElementById("cform").onsubmit=e=>{e.preventDefault();const m=document.getElementById("cmsg");m.textContent=`Received. Reference PW-${1000+id}. We'll review it within 48 hours.`;m.hidden=false;e.target.reset()};
-}
 
 /* report: every [data-bot] button opens the simulated WhatsApp chat */
 const $=id=>document.getElementById(id);
@@ -254,97 +211,179 @@ $("rfCopy").onclick=()=>{
 };
 document.getElementById("copyg").onclick=()=>{const t=document.getElementById("gmail").textContent;navigator.clipboard?.writeText(t).then(()=>toast("Copied")).catch(()=>{const s=getSelection(),g=document.createRange();g.selectNodeContents(document.getElementById("gmail"));s.removeAllRanges();s.addRange(g);toast("Selected. Press copy.")})};
 
-/* AUTH (simulated OTP) */
-let phone="",code="",timer=null,left=0,attempts=0,consent=false;
+/* ---------- sign-in, through the API (login page, restaurant claim and the WhatsApp chat share it) ---------- */
+const VIA={whatsapp:"on WhatsApp ",sms:"by SMS ",console:""};
+const sentTo=(ph,ch)=>`Sent ${VIA[ch]||""}to +91 ${ph.slice(0,5)} ${ph.slice(5)}`;
+/* the development API has no SMS or WhatsApp account, so it prints codes in its own terminal */
+const devHint=ch=>ch==="console"?`<p class="muted" style="font-size:13px;margin-top:6px">Development server: the code is printed in the API terminal.</p>`:"";
+const errHTML=m=>`<div class="err">${esc(m)}</div>`;
+const fmtPhone=ph=>ph.slice(0,5)+" "+ph.slice(5);
+const SIGNIN={
+  request:ph=>api("POST","/auth/otp/request",{phone:ph}),
+  verify:async(ph,code,consent)=>{const {user}=await api("POST","/auth/otp/verify",{phone:ph,code,consent});await signedIn(user);return user}
+};
+/* the API signed someone in: keep their details, then load their follows and watched areas */
+async function signedIn(user){
+  S.user={id:user.id,phone:localPhone(user.phone),name:user.name||"",wa:user.whatsappAlerts,role:user.role};
+  if(S.owner==null&&user.ownedRestaurantIds&&user.ownedRestaurantIds.length)S.owner=user.ownedRestaurantIds[0];
+  RP.registerNumber(S.user.phone);syncAuthBtn();
+  try{
+    const [f,a]=await Promise.all([api("GET","/me/follows"),api("GET","/me/areas")]);
+    S.follows=new Set(f.items.map(x=>x.id));S.areas=a.items;
+  }catch(e){toast(e.message)}
+}
+function signedOut(){S.user=null;S.follows=new Set();S.areas=[];S.owner=null;S.ownerReports=null;consent=false;syncAuthBtn()}
+/* follow or unfollow right away, and undo it if the API says no */
+async function setFollow(id,on){
+  on?S.follows.add(id):S.follows.delete(id);
+  try{await api(on?"PUT":"DELETE","/me/follows/"+id);return true}
+  catch(e){on?S.follows.delete(id):S.follows.add(id);toast(e.message);return false}
+}
+async function addArea(area){
+  await api("POST","/me/areas",{area});
+  S.areas=(await api("GET","/me/areas")).items;
+}
+
+/* login page: number and consent, then the code */
+let phone="",timer=null,consent=false,otpInfo=null,busy=false;
 function renderAuth(step){
   const P=document.getElementById("authPanel");clearInterval(timer);
   if(step==="phone"){
     const ok=v=>/^[6-9]\d{9}$/.test(v);
     P.innerHTML=`<div class="eyebrow">Step 1 of 2</div><h2 class="h-big" style="margin-top:12px">Your mobile number</h2>
-    <p class="muted" style="margin-top:12px">We'll send a 6-digit code by SMS. Used only for alerts you choose.</p>
+    <p class="muted" style="margin-top:12px">We'll send a 6-digit code on WhatsApp or by SMS. Used only for alerts you choose.</p>
     <form id="pf"><div class="phonefield"><span>+91</span><input id="ph" inputmode="numeric" autocomplete="tel-national" maxlength="10" placeholder="98765 43210" aria-label="10-digit mobile number" value="${phone}"></div>
     <div id="perr"></div>
     <label class="check" style="margin-top:22px"><input type="checkbox" id="lconsent" ${consent?"checked":""}><span>PlateWatch stores my number only to send alerts I choose. I can delete it anytime.</span></label>
     <div class="row-actions"><button class="pillbtn" id="sendBtn" type="submit" ${ok(phone)&&consent?"":"disabled"}>Send code</button><span class="muted">Searching is free without an account.</span></div></form>`;
-    const ph=document.getElementById("ph"),cb=document.getElementById("lconsent");ph.focus();
-    const sync=()=>{document.getElementById("sendBtn").disabled=!(ok(ph.value)&&cb.checked)};
+    const ph=document.getElementById("ph"),cb=document.getElementById("lconsent"),btn=document.getElementById("sendBtn");ph.focus();
+    const sync=()=>{btn.disabled=busy||!(ok(ph.value)&&cb.checked)};
     ph.oninput=()=>{ph.value=ph.value.replace(/\D/g,"").slice(0,10);sync();document.getElementById("perr").innerHTML=""};
     cb.onchange=()=>{consent=cb.checked;sync()};
-    document.getElementById("pf").onsubmit=e=>{e.preventDefault();if(!ok(ph.value)){document.getElementById("perr").innerHTML=`<div class="err">Enter a 10-digit Indian mobile number starting with 6, 7, 8 or 9.</div>`;return}if(!cb.checked)return;phone=ph.value;sendCode();renderAuth("otp")};
+    document.getElementById("pf").onsubmit=async e=>{e.preventDefault();
+      if(!ok(ph.value)){document.getElementById("perr").innerHTML=errHTML("Enter a 10-digit Indian mobile number starting with 6, 7, 8 or 9.");return}
+      if(!cb.checked||busy)return;
+      phone=ph.value;busy=true;btn.textContent="Sending…";sync();
+      try{otpInfo=await SIGNIN.request(phone);busy=false;renderAuth("otp")}
+      catch(err){busy=false;btn.textContent="Send code";sync();document.getElementById("perr").innerHTML=errHTML(err.message)}
+    };
   }
   if(step==="otp"){
     P.innerHTML=`<div class="eyebrow">Step 2 of 2</div><h2 class="h-big" style="margin-top:12px">Enter the code</h2>
-    <p class="muted" style="margin-top:12px">Sent to +91 ${phone.slice(0,5)} ${phone.slice(5)} · <button class="x" id="chg">Change number</button></p>
-    <div class="demo">Demo: no SMS is sent. Your code is ${code}</div>
-    <div class="otp" id="otp">${Array.from({length:6},(_,i)=>`<input inputmode="numeric" maxlength="1" aria-label="Digit ${i+1}" id="o${i}">`).join("")}</div>
+    <p class="muted" style="margin-top:12px">${sentTo(phone,otpInfo.channel)} · <button class="x" id="chg">Change number</button></p>${devHint(otpInfo.channel)}
+    <div class="otp" id="otp">${Array.from({length:6},(_,i)=>`<input inputmode="numeric" maxlength="1" aria-label="Digit ${i+1}" id="o${i}"${i===0?' autocomplete="one-time-code"':""}>`).join("")}</div>
     <div id="oerr"></div>
     <div class="row-actions"><button class="pillbtn" id="verBtn" disabled>Verify</button><button class="x" id="resend" disabled></button></div>`;
-    const boxes=[...document.querySelectorAll("#otp input")];boxes[0].focus();
+    const boxes=[...document.querySelectorAll("#otp input")],oerr=document.getElementById("oerr"),verBtn=document.getElementById("verBtn");boxes[0].focus();
     const val=()=>boxes.map(b=>b.value).join("");
-    const upd=()=>{document.getElementById("verBtn").disabled=val().length!==6;if(val().length===6)verify(val())};
+    const verify=async v=>{
+      if(busy)return;busy=true;verBtn.disabled=true;oerr.innerHTML="";
+      try{const user=await SIGNIN.verify(phone,v,consent);busy=false;finishLogin(user)}
+      catch(err){
+        busy=false;oerr.innerHTML=errHTML(err.message);
+        boxes.forEach(b=>b.value="");
+        /* a used-up or expired code can't be retried: only "Resend code" helps */
+        if(err.code==="TOO_MANY_ATTEMPTS"||err.details.code==="CODE_EXPIRED")boxes.forEach(b=>b.disabled=true);else boxes[0].focus();
+      }
+    };
+    const upd=()=>{verBtn.disabled=busy||val().length!==6;if(val().length===6)verify(val())};
     boxes.forEach((b,i)=>{
-      b.oninput=()=>{b.value=b.value.replace(/\D/g,"").slice(-1);if(b.value&&i<5)boxes[i+1].focus();document.getElementById("oerr").innerHTML="";upd()};
+      b.oninput=()=>{b.value=b.value.replace(/\D/g,"").slice(-1);if(b.value&&i<5)boxes[i+1].focus();oerr.innerHTML="";upd()};
       b.onkeydown=e=>{if(e.key==="Backspace"&&!b.value&&i>0)boxes[i-1].focus()};
       b.onpaste=e=>{e.preventDefault();const d=(e.clipboardData.getData("text")||"").replace(/\D/g,"").slice(0,6);d.split("").forEach((c,k)=>boxes[k].value=c);boxes[Math.min(d.length,5)].focus();upd()};
     });
-    document.getElementById("verBtn").onclick=()=>verify(val());
+    verBtn.onclick=()=>verify(val());
     document.getElementById("chg").onclick=()=>renderAuth("phone");
     const rs=document.getElementById("resend");
+    let left=(otpInfo.resendInSeconds||30)+1;
     const tickR=()=>{left--;rs.textContent=left>0?`Resend in 0:${String(left).padStart(2,"0")}`:"Resend code";rs.disabled=left>0;if(left<=0)clearInterval(timer)};
-    left=31;tickR();timer=setInterval(tickR,1000);
-    rs.onclick=()=>{sendCode();attempts=0;renderAuth("otp");toast("New code sent")};
+    tickR();timer=setInterval(tickR,1000);
+    rs.onclick=async()=>{rs.disabled=true;
+      try{otpInfo=await SIGNIN.request(phone);renderAuth("otp");toast("New code sent")}
+      catch(err){oerr.innerHTML=errHTML(err.message);rs.disabled=false}
+    };
   }
 }
-/* no profile step: sign in, pre-fill the watched area from the place being followed, then return to where the user started */
-function finishLogin(){
+/* no profile step: pre-fill the watched area from the place being followed, then return to where the user started */
+async function finishLogin(){
   const nx=S.after;S.after=null;
-  S.user={phone,name:"",wa:true};RP.registerNumber(phone);
-  if(nx&&nx.follow){const r=D.find(x=>x.id===nx.follow);if(r&&!S.areas.includes(r.area))S.areas.unshift(r.area)}
-  syncAuthBtn();
-  if(nx&&nx.follow){S.follows.add(nx.follow);toast("You're in. Following this place now.");go("detail",nx.follow)}
+  if(nx&&nx.follow){
+    await setFollow(nx.follow,true);
+    const r=place(nx.follow);
+    if(r&&!S.areas.some(a=>a.area.toLowerCase()===r.area.toLowerCase()))await addArea(r.area).catch(()=>{});
+    toast("You're in. Following this place now.");go("detail",nx.follow);
+  }
+  else if(nx==="admin"){toast("You're in.");go("admin")}
   else{toast("You're in. Alerts are on.");go("account")}
-}
-function sendCode(){code=String(Math.floor(100000+Math.random()*900000))}
-function verify(v){
-  if(v===code){finishLogin();return}
-  attempts++;
-  const e=document.getElementById("oerr");
-  e.innerHTML=attempts>=3?`<div class="err">Too many wrong tries. Request a new code.</div>`:`<div class="err">That code doesn't match. ${3-attempts} ${3-attempts===1?"try":"tries"} left.</div>`;
-  document.querySelectorAll("#otp input").forEach(b=>b.value="");document.getElementById("o0").focus();document.getElementById("verBtn").disabled=true;
-  if(attempts>=3)document.querySelectorAll("#otp input").forEach(b=>b.disabled=true);
 }
 
 /* account */
 function renderAccount(){
-  document.getElementById("accPhone").textContent="Signed in · +91 "+S.user.phone.slice(0,5)+" "+S.user.phone.slice(5);
+  document.getElementById("accPhone").textContent="Signed in · +91 "+fmtPhone(S.user.phone);
   document.getElementById("accHello").textContent=S.user.name?`${S.user.name}'s alerts`:"Your alerts";
-  const fl=[...S.follows].map(id=>D.find(r=>r.id===id)).filter(Boolean);
-  document.getElementById("followList").innerHTML=fl.length?fl.map(r=>`<div class="follow"><div><b>${esc(r.name)}</b><div class="muted">${esc(r.area)} · ${st(cur(r)[1])}</div></div><div style="display:flex;gap:14px"><button class="x" data-open="${r.id}">View</button><button class="x" data-unf="${r.id}">Unfollow</button></div></div>`).join(""):`<p class="muted" style="padding-top:14px">Not following anyone yet. Open any entry and tap "Follow for alerts".</p>`;
+  renderFollows();
   document.getElementById("accName").value=S.user.name||"";
   document.getElementById("waToggle").checked=S.user.wa!==false;
-  document.getElementById("waLabel").textContent=`Send alerts on WhatsApp to +91 ${S.user.phone.slice(0,5)} ${S.user.phone.slice(5)}`;
-  const mine=REPORTS.filter(x=>x.user===S.user.phone).sort((a,b)=>b.id-a.id);
-  document.getElementById("myReports").innerHTML=(mine.map(myReportHTML).join("")||`<p class="muted" style="padding-top:14px">No reports yet.</p>`)+`<p style="padding-top:14px"><button class="x" data-bot>${mine.length?"Open my WhatsApp chat":"Report a problem on WhatsApp"}</button></p>`;
-  document.getElementById("areaList").innerHTML=S.areas.map((a,i)=>{const n=D.filter(r=>r.area.toLowerCase()===a.toLowerCase()).length;return `<div class="follow"><div><b>${esc(a)}</b><div class="muted">${n} logged ${n===1?"action":"actions"}</div></div><button class="x" data-rma="${i}">Remove</button></div>`}).join("")||`<p class="muted" style="padding-top:14px">No areas yet.</p>`;
+  document.getElementById("waLabel").textContent=`Send alerts on WhatsApp to +91 ${fmtPhone(S.user.phone)}`;
+  renderMyReports();
+  document.getElementById("areaList").innerHTML=S.areas.map(a=>{const n=a.actions||0;return `<div class="follow"><div><b>${esc(a.area)}</b><div class="muted">${n} logged ${n===1?"action":"actions"}</div></div><button class="x" data-rma="${a.id}">Remove</button></div>`}).join("")||`<p class="muted" style="padding-top:14px">No areas yet.</p>`;
 }
-document.getElementById("p-account").addEventListener("click",e=>{
+document.getElementById("p-account").addEventListener("click",async e=>{
   const o=e.target.closest("[data-open]"),u=e.target.closest("[data-unf]"),a=e.target.closest("[data-rma]");
   if(o)go("detail",+o.dataset.open);
-  if(u){S.follows.delete(+u.dataset.unf);renderAccount();toast("Unfollowed")}
-  if(a){S.areas.splice(+a.dataset.rma,1);renderAccount()}
+  if(u){const ok=await setFollow(+u.dataset.unf,false);renderAccount();if(ok)toast("Unfollowed")}
+  if(a){const id=+a.dataset.rma;
+    try{await api("DELETE","/me/areas/"+id);S.areas=S.areas.filter(x=>x.id!==id);renderAccount()}catch(err){toast(err.message)}}
 });
-/* what the reporter sees: Awaiting moderation → Accepted → Restaurant notified → Sent to FDA Maharashtra → Official action taken */
-function myReportHTML(x){
-  return `<div class="myrep"><div class="myrep-top"><b>${esc(RP.outletName(x))}</b><span class="myrep-ref">${esc(x.ref)}</span></div>
-    <div class="muted">${esc(x.cat||"Report")} · ${fmt(x.date)} · Evidence: ${esc(RP.evidenceText(x))}</div>${RP.stagesHTML(x)}</div>`;
+/* followed places, fresh from the API (their status may have changed since login) */
+async function renderFollows(){
+  const el=document.getElementById("followList");
+  if(!el.innerHTML)el.innerHTML=`<p class="muted" style="padding-top:14px">Loading…</p>`;
+  let fl;
+  try{fl=(await api("GET","/me/follows")).items}catch(e){el.innerHTML=`<p class="muted" style="padding-top:14px">${esc(e.message)}</p>`;return}
+  remember(fl);S.follows=new Set(fl.map(r=>r.id));
+  el.innerHTML=fl.length?fl.map(r=>`<div class="follow"><div><b>${esc(r.name)}</b><div class="muted">${esc(r.area)} · ${st(r.status||"none")}</div></div><div style="display:flex;gap:14px"><button class="x" data-open="${r.id}">View</button><button class="x" data-unf="${r.id}">Unfollow</button></div></div>`).join(""):`<p class="muted" style="padding-top:14px">Not following anyone yet. Open any entry and tap "Follow for alerts".</p>`;
 }
-document.getElementById("nameForm").onsubmit=e=>{e.preventDefault();S.user.name=document.getElementById("accName").value.trim();renderAccount();toast("Saved")};
-document.getElementById("waToggle").onchange=e=>{S.user.wa=e.target.checked;toast(e.target.checked?"WhatsApp alerts on":"WhatsApp alerts off")};
-document.getElementById("areaForm").onsubmit=e=>{e.preventDefault();const v=document.getElementById("newArea").value.trim();if(v&&!S.areas.includes(v))S.areas.push(v);e.target.reset();renderAccount();toast("Watching "+v)};
-document.getElementById("signout").onclick=()=>{S.user=null;consent=false;syncAuthBtn();toast("Signed out");go("home")};
+/* what the reporter sees, from the API: Awaiting moderation → Accepted → Restaurant notified → Sent to FDA Maharashtra → Official action taken */
+const EVK={photo:"photo",video:"video",bill:"bill",note:"doctor's note"};
+function myReportHTML(x){
+  const i=x.stage,ev=x.evidence.length?`${x.evidence.length} (${x.evidence.map(k=>EVK[k]).join(", ")})`:"None";
+  const steps=i<0?`<p class="myrep-dis">Couldn't be used: ${esc(x.rejectReason||"not substantiated after review")}.</p>`
+    :`<ol class="rstep${x.share?"":" rstep-2"}" aria-label="Report status">${x.stages.map((st,k)=>`<li class="${k<i?"done":k===i?"now":""}"${k===i?' aria-current="step"':""}><span>${esc(st)}</span></li>`).join("")}</ol>
+    ${!x.share?`<p class="myrep-dis">Kept private: used only to spot patterns, never shared with the restaurant or the regulator.</p>`:!x.evidence.some(k=>k!=="note")?`<p class="myrep-dis">No photo, video or bill, so this report can't be sent to the regulator.</p>`:""}
+    ${x.askMore?`<p class="myrep-dis">A moderator asked for more. Open your WhatsApp chat and tap “Add to ${esc(x.ref)}”.</p>`:""}`;
+  return `<div class="myrep"><div class="myrep-top"><b>${esc(x.place)}</b><span class="myrep-ref">${esc(x.ref)}</span></div>
+    <div class="muted">${esc(x.category)} · ${fmt(x.date)} · Evidence: ${esc(ev)}</div>${steps}</div>`;
+}
+async function renderMyReports(){
+  const el=document.getElementById("myReports");
+  const chat=n=>`<p style="padding-top:14px"><button class="x" data-bot>${n?"Open my WhatsApp chat":"Report a problem on WhatsApp"}</button></p>`;
+  if(!el.innerHTML)el.innerHTML=`<p class="muted" style="padding-top:14px">Loading…</p>`;
+  let items;
+  try{items=(await api("GET","/me/reports")).items}catch(e){el.innerHTML=`<p class="muted" style="padding-top:14px">${esc(e.message)}</p>`+chat(0);return}
+  el.innerHTML=(items.map(myReportHTML).join("")||`<p class="muted" style="padding-top:14px">No reports yet.</p>`)+chat(items.length);
+}
+document.getElementById("nameForm").onsubmit=async e=>{e.preventDefault();
+  try{const {user}=await api("PATCH","/me",{name:document.getElementById("accName").value.trim()});S.user.name=user.name||"";renderAccount();toast("Saved")}
+  catch(err){toast(err.message)}
+};
+document.getElementById("waToggle").onchange=async e=>{const on=e.target.checked;
+  try{await api("PATCH","/me",{whatsappAlerts:on});S.user.wa=on;toast(on?"WhatsApp alerts on":"WhatsApp alerts off")}
+  catch(err){e.target.checked=!on;toast(err.message)}
+};
+document.getElementById("areaForm").onsubmit=async e=>{e.preventDefault();const v=document.getElementById("newArea").value.trim();if(!v)return;
+  try{await addArea(v);e.target.reset();renderAccount();toast("Watching "+v)}catch(err){toast(err.message)}
+};
+document.getElementById("signout").onclick=async()=>{
+  try{await api("POST","/auth/logout")}catch(err){toast(err.message);return}
+  signedOut();toast("Signed out");go("home");
+};
 document.getElementById("deldata").onclick=()=>document.getElementById("delconfirm").hidden=false;
 document.getElementById("delno").onclick=()=>document.getElementById("delconfirm").hidden=true;
-document.getElementById("delyes").onclick=()=>{S.user=null;consent=false;S.follows=new Set();S.areas=[];phone="";document.getElementById("delconfirm").hidden=true;syncAuthBtn();toast("Your data has been deleted");go("home")};
+document.getElementById("delyes").onclick=async()=>{
+  try{await api("DELETE","/me")}catch(err){toast(err.message);return}
+  phone="";document.getElementById("delconfirm").hidden=true;signedOut();toast("Your data has been deleted");go("home");
+};
 
 /* ================= V3: TWO-SIDED ================= */
 const CATS=[
@@ -400,60 +439,55 @@ const AI={
 function aiFor(reqId){return AI[reqId]||["✓ Area in frame appears clean","⚠ Image partly out of focus, reviewer should confirm"]}
 function mkEv(req,ago,status,type){const t=type||(req[0]==="d"||req==="p3"||req==="h3"?"document":"photo");return {id:EVID++,name:(t==="document"?REQ[req].text.split(" ").slice(0,3).join("-").toLowerCase()+".pdf":"kitchen-"+req+".jpg"),type:t,date:dISO(ago),status:status||"verified",note:"",url:null,ai:t==="photo"?aiFor(req):null}}
 
-/* seed profiles (fictional) */
+/* the fictional sample profile behind the homepage illustrations and How it works (Green Leaf Dhaba).
+   Kept under its own key, so it can never mix with a real restaurant's dashboard. */
+const DEMO="demo";
 const PROF={};
 (function(){
-  const g={owner:"98200 11223",level:"platform",verifiedOn:"2026-09-12",adminNote:"",resp:{},ev:{},
+  const g={owner:"98200 11223",level:"platform",verifiedOn:"2026-09-12",adminNote:"",resp:{},ev:{},pausedPublicly:false,
     journey:[{m:"Jul 2026",score:61,kind:"Issues found",notes:["Pest-control records missing","Raw and cooked food shared a shelf","Staff training documents missing"]},
              {m:"Aug 2026",score:84,kind:"Issues resolved",notes:["Pest-control contract and records uploaded","New separate storage shelving photographed"]}]};
   const ages={kitchen:3,storage:25,pest:43,personal:10,clean:5,docs:20,ops:6};
   REQS.forEach(r=>{g.resp[r.id]="yes";g.ev[r.id]=[mkEv(r.id,ages[r.cat])]});
   g.ev.h3=[mkEv("h3",12)];
   g.ev.d2=[mkEv("d2",40)];
-  PROF[3]=g;
-  const b={owner:"98191 44556",level:"self",verifiedOn:null,adminNote:"",resp:{},ev:{},
-    journey:[{m:"Aug 2026",score:72,kind:"First checkup",notes:["Pest-control records missing","Water test report missing"]}]};
-  REQS.forEach((r,i)=>{b.resp[r.id]="yes";b.ev[r.id]=[mkEv(r.id,2+(i%12),"submitted")]});
-  b.resp.p3="no";b.ev.p3=[];b.resp.d2="no";b.ev.d2=[];b.resp.o4="na";b.ev.o4=[];
-  PROF[13]=b;
-  /* a suspended restaurant that has claimed its profile: red dot + its badge, compliance score paused publicly */
-  const dd={owner:"98224 60917",level:"self",verifiedOn:null,adminNote:"",resp:{},ev:{},journey:[{m:"Aug 2026",score:58,kind:"First checkup",notes:["Pest-control records missing"]}]};
-  REQS.forEach((r,i)=>{dd.resp[r.id]="yes";dd.ev[r.id]=i%5===0?[]:[mkEv(r.id,2+(i%9),"submitted")]});
-  PROF[9]=dd;
-  /* extra sample places: 2 fully PlateWatch verified, 3 claimed and self-reported */
-  const phone=id=>"98"+String(20000000+id*7919).slice(0,3)+" "+String(10000+id*37).slice(0,5);
-  EXTRA_VERIFIED.forEach((id,k)=>{const v={owner:phone(id),level:"platform",verifiedOn:"2026-09-1"+(4+k),adminNote:"",resp:{},ev:{},journey:[]};
-    REQS.forEach((r,i)=>{v.resp[r.id]="yes";v.ev[r.id]=[mkEv(r.id,1+((i+k)%9))]});PROF[id]=v});
-  EXTRA_CLAIMED.forEach((id,k)=>{const c={owner:phone(id),level:"self",verifiedOn:null,adminNote:"",resp:{},ev:{},journey:[]};
-    REQS.forEach((r,i)=>{c.resp[r.id]="yes";c.ev[r.id]=(i+k)%4===0?[]:[mkEv(r.id,3+(i%10),"submitted")]});PROF[id]=c});
+  PROF[DEMO]=g;
 })();
-let REPORTS=[
- {id:1,rid:3,text:"Saw a cockroach near the tandoor area during dinner.",date:"2026-07-14",status:"resolved",photo:true,flag:false,response:{text:"Full pest-control treatment done on 18 July and a monthly contract signed. Certificate uploaded to our profile.",date:"2026-07-19",ev:"pest-control-certificate.pdf"}},
- {id:2,rid:3,text:"Drinking water served at the table tasted odd.",date:"2026-09-21",status:"pending",photo:false,flag:false,response:null},
- {id:3,rid:13,text:"Bao was cold in the middle and seemed reheated.",date:"2026-09-15",status:"review",photo:true,flag:false,response:null},
- {id:4,rid:7,text:"Water logging near the kitchen's back entrance.",date:"2026-09-18",status:"verified",photo:true,flag:false,response:null}
-];
-let RID=5;
+/* chat reports sent in this visit: the chat's own thread and "Copy for FSSAI" read these; the real ones are in the API */
+let REPORTS=[];
+/* the sample community report in the homepage illustration */
+const SAMPLE_REPORT={id:1,rid:3,text:"Saw a cockroach near the tandoor area during dinner.",date:"2026-07-14",status:"resolved",photo:true,flag:false,response:{text:"Full pest-control treatment done on 18 July and a monthly contract signed. Certificate uploaded to our profile.",date:"2026-07-19",ev:"pest-control-certificate.pdf"}};
+let RID=1;
 const RS={pending:"Awaiting moderation",accepted:"Moderated",rejected:"Not used",review:"Under review",verified:"Confirmed · unresolved",resolved:"Resolved",dismissed:"Not substantiated"};
 const rsPill=s=>`<span class="rs rs-${s}">${RS[s]}</span>`;
 const LV={self:"Claimed · self-reported",pending:"Verification requested",platform:"PlateWatch verified"};
 const lvl=l=>`<span class="lvl lvl-${l}">${LV[l]}</span>`;
 S.owner=null;S.openCats=new Set(["kitchen"]);S.claim=null;
-function loginAs(ph){if(S.user&&S.user.phone===ph)return;S.user={phone:ph,name:"",wa:true};syncAuthBtn()}
 /* refresh whichever page shows report state after the chat or a moderator changes it */
-function refreshReports(){if(!document.getElementById("p-account").hidden&&S.user)renderAccount();if(!document.getElementById("p-admin").hidden)renderAdmin(S.admTab||"reports");if(!document.getElementById("p-detail").hidden&&S.page.p==="detail")renderDetail(S.page.arg);if(!document.getElementById("p-dash").hidden&&S.owner!=null)renderDash(S.dashTab||"overview")}
-const RP=createReporting({D,REPORTS,S,esc,fmt,st,cur,toast,findPlaces,copyText,selectNode,TODAY,newId:()=>RID++,loginAs,onChange:refreshReports});
-/* reviewer-approved photo evidence (spot checks and seeds); it counts as fresh evidence for that item */
+function refreshReports(){if(!document.getElementById("p-account").hidden&&S.user)renderAccount();if(!document.getElementById("p-dash").hidden&&S.owner!=null)renderDash(S.dashTab||"overview")}
+const RP=createReporting({REPORTS,S,esc,fmt,st,cur,toast,place,search:searchAPI,remember,copyText,selectNode,TODAY,newId:()=>RID++,auth:SIGNIN,onChange:refreshReports});
+/* reviewer-approved photo evidence from spot checks; it counts as fresh evidence for that item */
 function addApprovedPhoto(rid,req,o){
   const p=PROF[rid],e={id:EVID++,name:o.name,type:"photo",date:o.date,status:"verified",note:"",url:o.url,ai:o.ai,flag:false,src:o.src||"checkup",people:!!o.people,sample:!!o.sample};
   (p.ev[req]=p.ev[req]||[]).push(e);if(p.resp[req]!=="yes")p.resp[req]="yes";return e;
 }
-const SCM=createSpotChecks({D,PROF,REQS,REQ,CAT,CATS,RP,esc,fmt,toast,aiFor,addEvidence:addApprovedPhoto,onChange:refreshReports});
-/* official-status dots and PlateWatch badges (never mixed), and the tracker map */
-const MAP=createMap({D,PROF,REQS,CAT,daysAgo,SCM,cur,st,esc,fmt,summaryLine,filtered,go,query:()=>S.q,noResults:noResHTML});
-/* the public PlateWatch level as a pill: PlateWatch verified, or Claimed · self-reported (including while paused) */
-const lvlFor=rid=>MAP.badgeOf(rid)==="verified"?lvl("platform"):`<span class="lvl lvl-self">${LV.self}</span>`;
-const levelText=rid=>MAP.badgeLabel(rid);
+const SCM=createSpotChecks({PROF,REQS,REQ,CAT,CATS,RP,esc,fmt,toast,aiFor,addEvidence:addApprovedPhoto,onChange:refreshReports});
+/* the tracker map; restaurants come from the API */
+const MAP=createMap({api,esc,fmt,st,go,filters:()=>({q:S.q,city:S.city,status:S.type,badge:S.ver,sort:S.sort}),noResults:noResHTML,remember});
+/* PlateWatch's badge for a profile held here (the owner's dashboard, the illustrations), by the same rules as the API:
+   verified needs every applicable requirement backed by current approved evidence, and nothing waiting for review */
+function verif(rid){
+  const p=PROF[rid];if(!p)return {k:"none"};
+  if(p.level!=="platform")return {k:"claimed"};
+  const why=[];
+  if(Object.values(p.ev).flat().some(e=>e.status==="submitted"||e.status==="more"))why.push("new evidence waiting for review");
+  const unmet=REQS.filter(q=>p.resp[q.id]!=="na"&&!(p.resp[q.id]==="yes"&&(p.ev[q.id]||[]).some(e=>e.status==="verified"&&daysAgo(e.date)<=CAT[q.cat].expiry))).length;
+  if(unmet)why.push(`${unmet} requirement${unmet===1?"":"s"} without current approved evidence`);
+  return why.length?{k:"claimed",paused:why.join("; ")}:{k:"verified"};
+}
+/* the PlateWatch level as a pill: PlateWatch verified, or Claimed · self-reported (including while paused) */
+const lvlFor=rid=>verif(rid).k==="verified"?lvl("platform"):`<span class="lvl lvl-self">${LV.self}</span>`;
+const levelText=rid=>({none:"Not claimed yet",claimed:"Claimed · self-reported",verified:"PlateWatch verified"})[verif(rid).k];
 
 function currentEv(rid,reqId){const p=PROF[rid];const c=CAT[REQ[reqId].cat];return (p.ev[reqId]||[]).filter(e=>e.status!=="rejected"&&daysAgo(e.date)<=c.expiry)}
 function scoreOf(rid){
@@ -489,52 +523,72 @@ function journeySVG(rid,hideNow){
   const x=i=>L+(pts.length===1?iw/2:i*iw/(pts.length-1)),y=s=>T+(1-s/100)*ih;
   const grid=[25,50,75,100].map(v=>`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="#E4E4E4"/><text x="${L-10}" y="${y(v)+4}" text-anchor="end" font-family="Geist Mono, monospace" font-size="11" fill="#6B6B6B">${v}</text>`).join("");
   const path=pts.map((q,i)=>(i?"L":"M")+x(i)+" "+y(q.s)).join(" ");
-  const dots=pts.map((q,i)=>`<circle cx="${x(i)}" cy="${y(q.s)}" r="${i===pts.length-1?6:4.5}" fill="${i===pts.length-1?"#FFFFFF":"#0A0A0A"}" stroke="#0A0A0A" stroke-width="2"/><text x="${x(i)}" y="${y(q.s)-12}" text-anchor="middle" font-family="Archivo, sans-serif" font-weight="800" font-size="15" fill="#0A0A0A">${q.s}</text><text x="${x(i)}" y="${H-10}" text-anchor="middle" font-family="Geist Mono, monospace" font-size="11" fill="#6B6B6B">${q.m.toUpperCase()}</text>`).join("");
+  const dots=pts.map((q,i)=>`<circle cx="${x(i)}" cy="${y(q.s)}" r="${i===pts.length-1?6:4.5}" fill="${i===pts.length-1?"#FFFFFF":"#0A0A0A"}" stroke="#0A0A0A" stroke-width="2"/><text x="${x(i)}" y="${y(q.s)-12}" text-anchor="middle" font-family="Geist, sans-serif" font-weight="800" font-size="15" fill="#0A0A0A">${q.s}</text><text x="${x(i)}" y="${H-10}" text-anchor="middle" font-family="Geist Mono, monospace" font-size="11" fill="#6B6B6B">${q.m.toUpperCase()}</text>`).join("");
   return `<svg class="jchart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Compliance score over time: ${pts.map(q=>q.m+" "+q.s).join(", ")}">${grid}<path d="${path}" fill="none" stroke="#0A0A0A" stroke-width="2"/>${dots}</svg>`;
 }
 function journeyList(rid,hideNow){const p=PROF[rid];const sc=scoreOf(rid);
   return `<div class="jlist">${p.journey.map(j=>`<div><span class="eyebrow">${j.m}</span><b>${j.score}</b><div><span style="font-size:13px;font-weight:500">${j.kind}</span><ul>${j.notes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul></div></div>`).join("")}
   ${hideNow?`<div><span class="eyebrow">Now</span><b>—</b><div><span style="font-size:13px;font-weight:500">Compliance score paused while an official action is open</span></div></div></div>`:`<div><span class="eyebrow">Now</span><b>${sc.overall}</b><div><span style="font-size:13px;font-weight:500">${sc.missing.length?sc.missing.length+" requirement"+(sc.missing.length>1?"s":"")+" open":"All requirements met"}</span></div></div></div>`}`}
 
-/* ---------- PUBLIC PROFILE ---------- */
-function renderDetail(id){
-  const r=D.find(x=>x.id===id),c=cur(r),p=PROF[id];
-  const stale=(TODAY-new Date(r.verified))/864e5>30;
-  const f=S.follows.has(id);
-  const lic=c[1]==="sus"?"Suspended":c[1]==="rev"?"Revoked":"Active (as of last check)";
-  const enf=c[1]==="sus"||c[1]==="rev"||c[1]==="imp"?TYPES[c[1]][0]+" since "+fmt(c[0]):"No current action listed";
-  const reps=REPORTS.filter(x=>x.rid===id);
-  const shown=reps.filter(RP.visibleToRestaurant);
-  const waiting=reps.filter(x=>x.status==="pending"&&x.share!==false).length;
-  const openIssues=reps.filter(x=>x.status==="verified").length;
-  let comp="";
-  if(p){const sc=scoreOf(id),ec=evCounts(id),pz=paused(id);
+/* ---------- PUBLIC PROFILE (from the API) ---------- */
+/* approved kitchen photos by checkup area; the API only sends them once PUBLIC_GALLERY is on */
+function galleryHTML(list){
+  const groups=CATS.map(c=>({c,items:list.filter(p=>REQ[p.requirementId]&&REQ[p.requirementId].cat===c.k)})).filter(g=>g.items.length);
+  return `<div class="gal">${groups.map(({c,items})=>`<section class="gal-sec" aria-label="${esc(c.name)} photos"><div class="gal-h"><h3>${esc(c.name)}</h3><span class="muted">${items.length} photo${items.length===1?"":"s"}</span></div>
+    <div class="gal-grid">${items.map(p=>`<figure class="gal-item"><a class="gal-btn" href="${esc(p.url)}" target="_blank" rel="noopener" aria-label="Open photo: ${esc(c.name)}, ${fmt(p.capturedOn)}"><img src="${esc(p.url)}" alt="" loading="lazy"></a>
+      <figcaption><span class="gal-area">${esc(c.name)}</span><span class="gal-meta"><span class="gtag${p.source==="spot"?" gtag-spot":""}">${p.source==="spot"?"Spot check":"Checkup"}</span><span>${fmt(p.capturedOn)}</span></span></figcaption></figure>`).join("")}</div></section>`).join("")}</div>`;
+}
+let detailSeq=0;
+async function renderDetail(id){
+  const el=document.getElementById("detail"),my=++detailSeq,bt=backTarget(id);
+  const back=()=>`<button class="back" id="back">← Back to ${esc(pageName(bt))}</button>`;
+  const bindBack=()=>{document.getElementById("back").onclick=()=>go(bt.p,bt.arg)};
+  el.innerHTML=`${back()}<p class="muted" style="padding-block:40px">Loading…</p>`;bindBack();
+  let r;
+  try{r=await api("GET","/restaurants/"+id)}
+  catch(e){
+    if(my!==detailSeq)return;
+    const missing=e.status===404;
+    el.innerHTML=`${back()}<div style="padding-block:40px"><h1 class="h-mid">${missing?"No restaurant at this link":"Couldn't load this profile"}</h1>
+      <p class="muted" style="margin-top:10px">${missing?"It may have been removed, or the link is wrong. Search for the place instead.":esc(e.message)}</p>
+      <div class="row-actions"><button class="pillbtn" data-go="tracker">Search restaurants</button>${missing?"":`<button class="pillbtn out" id="detailRetry">Try again</button>`}</div></div>`;
+    bindBack();const rt=document.getElementById("detailRetry");if(rt)rt.onclick=()=>renderDetail(id);return;
+  }
+  /* the visitor moved on while this loaded */
+  if(my!==detailSeq||S.page.p!=="detail"||S.page.arg!==id)return;
+  remember([r]);
+  const status=r.status||"none",f=S.follows.has(id),c=r.compliance;
+  const lic=status==="sus"?"Suspended":status==="rev"?"Revoked":"Active (as of last check)";
+  const enf=["sus","rev","imp"].includes(status)?TYPES[status][0]+" since "+fmt(r.statusOn):"No current action listed";
+  const stale=(TODAY-new Date(r.lastVerifiedOn))/864e5>30;
+  let comp;
+  if(c){
+    const verified=r.badge.level==="verified";
     comp=`<div class="lane">
-      <span class="tag ${MAP.badgeOf(id)==="verified"?"tag-plat":"tag-self"}">${MAP.badgeOf(id)==="verified"?"PlateWatch verified · reviewed "+fmt(p.verifiedOn):"Restaurant-submitted · not yet PlateWatch verified"}</span>
-      ${MAP.pausedNote(id)}
-      ${SCM.missedHTML(id)}
+      <span class="tag ${verified?"tag-plat":"tag-self"}">${verified?"PlateWatch verified"+(c.verifiedOn?" · reviewed "+fmt(c.verifiedOn):""):"Restaurant-submitted · not yet PlateWatch verified"}</span>
+      ${pausedNote(r.badge,esc)}
       <h2 class="h-mid">Food Safety Compliance</h2>
-      <div class="scorewrap">${pubScore(id,sc.overall)}
-        <dl class="scoremeta">${pz?"":`<dt>Rating</dt><dd>${grade(sc.overall)}</dd>`}<dt>Requirements met</dt><dd>${sc.done} / ${sc.tot}</dd><dt>Last updated</dt><dd>${lastUpdated(id)}</dd><dt>Level</dt><dd>${levelText(id)}</dd></dl></div>
-      ${sc.crit.length?`<div class="crit"><b class="m">!</b><div><b>Critical requirement${sc.crit.length>1?"s":""} need${sc.crit.length>1?"":"s"} attention</b><br>${sc.crit.map(q=>esc(q.text)).join("; ")}</div></div>`:""}
-      ${barsHTML(sc)}
-      <h3 style="font-size:17px;margin-top:30px">Evidence freshness</h3>${freshHTML(id)}
-      <div class="evc"><span><b>${ec.total}</b> pieces of evidence</span><span><b>${ec.photo}</b> photos</span><span><b>${ec.video}</b> videos</span><span><b>${ec.document}</b> documents</span><span>Last upload ${ec.last?ago(ec.last):"—"}</span></div>
+      <div class="scorewrap">${c.paused?pausedHTML():`<div class="score">${c.score}<small>/100</small></div>`}
+        <dl class="scoremeta">${c.paused?"":`<dt>Rating</dt><dd>${esc(c.rating)}</dd>`}<dt>Requirements met</dt><dd>${c.requirementsMet} / ${c.requirementsTotal}</dd><dt>Last updated</dt><dd>${c.lastUpdated?fmt(c.lastUpdated):"—"}</dd><dt>Level</dt><dd>${badgeLabel(r.badge)}</dd></dl></div>
+      ${c.criticalOpen.length?`<div class="crit"><b class="m">!</b><div><b>Critical requirement${c.criticalOpen.length>1?"s":""} need${c.criticalOpen.length>1?"":"s"} attention</b><br>${c.criticalOpen.map(esc).join("; ")}</div></div>`:""}
+      <div class="bars">${c.categories.map(x=>x.percent==null?"":`<div class="bar"><span>${esc(x.name)}</span><span class="t"><i style="width:${x.percent}%"></i></span><span class="p">${x.percent}%</span></div>`).join("")}</div>
+      <h3 style="font-size:17px;margin-top:30px">Evidence freshness</h3>
+      <div class="fr">${c.freshness.map(x=>`<div><span class="fd fd-${x.state}"></span>${esc(x.name)}<span class="s">${x.state==="none"?"No evidence":x.state==="expired"?`${x.expiredItems} item${x.expiredItems>1?"s":""} expired`:"Updated "+ago(x.lastUpdated)}</span></div>`).join("")}</div>
+      <div class="evc"><span><b>${c.evidenceCounts.total}</b> pieces of evidence</span><span><b>${c.evidenceCounts.photos}</b> photos</span><span><b>${c.evidenceCounts.videos}</b> videos</span><span><b>${c.evidenceCounts.documents}</b> documents</span><span>Last upload ${c.lastUpdated?ago(c.lastUpdated):"—"}</span></div>
       <p class="disc">PlateWatch's own compliance score, calculated from the restaurant's evidence against ${REQS.length} food-safety requirements. It is not an FSSAI hygiene rating or a government certificate.</p>
     </div>
-    <div class="lane"><span class="tag tag-self">Restaurant-submitted · reviewed by PlateWatch</span><h2 class="h-mid">Kitchen gallery</h2><p class="gal-sub">Photos submitted by the restaurant, reviewed by PlateWatch.</p>${SCM.galleryHTML(id)}</div>
-    <div class="lane"><span class="tag tag-self">Restaurant-submitted · scored by PlateWatch</span><h2 class="h-mid">Compliance journey</h2>${journeySVG(id,pz)}${journeyList(id,pz)}</div>`;
+    ${r.gallery.length?`<div class="lane"><span class="tag tag-self">Restaurant-submitted · reviewed by PlateWatch</span><h2 class="h-mid">Kitchen gallery</h2><p class="gal-sub">Photos submitted by the restaurant, reviewed by PlateWatch.</p>${galleryHTML(r.gallery)}</div>`:""}`;
   } else {
     comp=`<div class="lane"><span class="tag tag-self">Restaurant-submitted</span><div class="claimbox"><div><h2 class="h-mid">No compliance profile yet</h2><p class="muted" style="margin:6px 0 0">This restaurant hasn't claimed its page or submitted evidence.</p></div><button class="pillbtn out" id="claimThis">Own this place? Claim it</button></div></div>`;
   }
-  const bt=backTarget(id),sum=summaryLine(r);
+  const sources=r.history.filter(h=>h.sourceUrl);
   const url=location.origin+location.pathname+"#profile-"+id;
-  const wa="https://wa.me/?text="+encodeURIComponent(sum+" Check before you go: "+url);
-  document.getElementById("detail").innerHTML=`
-  <button class="back" id="back">← Back to ${esc(pageName(bt))}</button>
-  <div class="sumline">${st(c[1])}<p class="sumline-t">${esc(sum)}</p></div>
+  const wa="https://wa.me/?text="+encodeURIComponent(r.summary+" Check before you go: "+url);
+  el.innerHTML=`
+  ${back()}
+  <div class="sumline">${st(status)}<p class="sumline-t">${esc(r.summary)}</p></div>
   <div class="dhead">
-    <div><h1 class="h-big pnm">${MAP.dotHTML(r)}<span>${esc(r.name)}</span></h1><div class="pnm-b">${MAP.badgeHTML(id)}</div><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.cat)}</div></div>
+    <div><h1 class="h-big pnm">${dotHTML(r.dot)}<span>${esc(r.name)}</span></h1><div class="pnm-b">${badgeHTML(r.badge)}</div><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.category)}</div></div>
     <div class="sharebar">
       <div class="sharebar-btns"><button class="pillbtn ${f?"out":""}" id="followBtn">${f?"✓ Following":"Follow for alerts"}</button><a class="pillbtn out" id="shareWa" href="${esc(wa)}" target="_blank" rel="noopener">Share on WhatsApp</a><button class="pillbtn out" id="copyLink" type="button">Copy link</button></div>
       <span class="shareurl" id="profUrl">${esc(url)}</span>
@@ -547,98 +601,160 @@ function renderDetail(id){
         <span class="tag tag-off">Official record · from FDA / FSSAI sources</span>
         <h2 class="h-mid">Official status</h2>
         <div class="facts" style="margin-top:18px">
-          <div><div class="k">FSSAI licence</div><div class="v">${lic}</div><div class="muted" style="font-family:var(--mono);font-size:12px;margin-top:2px">${r.lic}</div></div>
+          <div><div class="k">FSSAI licence</div><div class="v">${lic}</div><div class="muted" style="font-family:var(--mono);font-size:12px;margin-top:2px">${esc(r.licenceNumber)}</div></div>
           <div><div class="k">Government enforcement</div><div class="v">${enf}</div></div>
           <div><div class="k">FSSAI hygiene rating</div><div class="v">No official rating on record</div></div>
         </div>
-        <div class="muted" style="margin:-20px 0 22px;font-size:13px">Last verified ${fmt(r.verified)}${stale?" · <span class='st st-imp'>Status unverified</span>":""}</div>
+        <div class="muted" style="margin:-20px 0 22px;font-size:13px">Last verified ${fmt(r.lastVerifiedOn)}${stale?" · <span class='st st-imp'>Status unverified</span>":""}</div>
         <h3 style="font-size:17px">Regulatory history</h3>
-        ${r.hist.length?`<ol class="tl">${[...r.hist].reverse().map(h=>`<li><span class="dot"></span><div><div class="dt">${fmt(h[0])}</div>${st(h[1])}<p>${esc(h[2])}</p></div></li>`).join("")}</ol>`:`<p class="muted">No official action on record as of ${fmt(r.verified)}. This is not a guarantee of hygiene.</p>`}
-        ${MAP.legendHTML()}
+        ${r.history.length?`<ol class="tl">${r.history.map(h=>`<li><span class="dot"></span><div><div class="dt">${fmt(h.actionOn)}</div>${st(h.type)}<p>${esc(h.summary)}</p>${h.sourceUrl?`<a class="x" href="${esc(h.sourceUrl)}" target="_blank" rel="noopener">Official source</a>`:""}</div></li>`).join("")}</ol>`:`<p class="muted">No official action on record as of ${fmt(r.lastVerifiedOn)}. This is not a guarantee of hygiene.</p>`}
+        ${legendHTML()}
       </div>
       ${comp}
       <div class="lane">
-        <span class="tag tag-com">Community reports · moderated, not independently verified unless marked</span>
+        <span class="tag tag-com">Community reports · moderated, not independently verified</span>
         <h2 class="h-mid">Community reports</h2>
-        <div class="evc" style="margin-bottom:10px"><span><b>${shown.length}</b> published</span><span><b>${openIssues}</b> verified unresolved safety issue${openIssues===1?"":"s"}</span>${waiting?`<span><b>${waiting}</b> awaiting moderation (not shown)</span>`:""}</div>
-        ${shown.map(x=>`<div class="rep"><div class="top">${rsPill(x.status)}<span>${fmt(x.date)}</span>${x.photo?"<span>Photo attached</span>":""}</div><p>${esc(x.text)}</p>
-          ${x.response?`<div class="resp"><span class="tag tag-self">Restaurant response · ${fmt(x.response.date)}</span><div>${esc(x.response.text)}</div>${x.response.ev?`<div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${esc(x.response.ev)}</div>`:""}</div>`:""}</div>`).join("")||`<p class="muted">No published reports.</p>`}
+        <div class="evc" style="margin-bottom:10px"><span><b>${r.reports.length}</b> published</span>${r.reportsAwaitingModeration?`<span><b>${r.reportsAwaitingModeration}</b> awaiting moderation (not shown)</span>`:""}</div>
+        ${r.reports.map(x=>`<div class="rep"><div class="top">${rsPill("accepted")}<span>${fmt(x.date)}</span>${x.hasPhoto?"<span>Photo attached</span>":""}</div><p>${esc(x.text)}</p>
+          ${x.response?`<div class="resp"><span class="tag tag-self">Restaurant response · ${fmt(x.response.date)}</span><div>${esc(x.response.text)}</div>${x.response.hasEvidence?`<div class="muted" style="font-size:12px;margin-top:4px">Evidence attached</div>`:""}</div>`:""}</div>`).join("")||`<p class="muted">No published reports.</p>`}
         <div style="margin-top:20px"><button class="pillbtn out" type="button" data-bot data-bot-rid="${id}">Report a food-safety problem here</button></div>
       </div>
     </div>
     <div class="side" style="padding-top:34px">
-      <div><h3>Sources</h3><div class="srcl"><span>FDA Maharashtra press release <em>OFFICIAL · SAMPLE</em></span><span>Regional daily report <em>NEWS · SAMPLE</em></span></div><p class="muted" style="margin-top:10px">Live entries link to the original release and articles.</p></div>
+      <div><h3>Sources</h3>${sources.length?`<div class="srcl">${sources.map(h=>`<span><a href="${esc(h.sourceUrl)}" target="_blank" rel="noopener">${esc(h.authority)} · ${TYPES[h.type][0]}</a><em>OFFICIAL · ${fmt(h.actionOn)}</em></span>`).join("")}</div>`:`<p class="muted">No official source linked yet.</p>`}<p class="muted" style="margin-top:10px">Each official entry links to the release or order it came from.</p></div>
       <div><h3>Something wrong here?</h3><p class="muted" style="margin:0 0 14px">Owners and readers can request a correction. We reply within 48 hours.</p>
         <form class="form" id="cform">
-          <label for="c-role">You are</label><select class="input" id="c-role"><option>The business owner</option><option>A customer</option><option>Other</option></select>
-          <label for="c-msg">What needs fixing</label><textarea class="input" id="c-msg" rows="3" required placeholder="e.g. Licence restored on 20 Sep, re-inspection order attached"></textarea>
+          <label for="c-role">You are</label><select class="input" id="c-role"><option value="owner">The business owner</option><option value="customer">A customer</option><option value="other">Other</option></select>
+          <label for="c-msg">What needs fixing</label><textarea class="input" id="c-msg" rows="3" required minlength="5" maxlength="1000" placeholder="e.g. Licence restored on 20 Sep, re-inspection order attached"></textarea>
           <div style="margin-top:8px"><button class="pillbtn" type="submit">Send correction request</button></div>
           <div id="cmsg" class="note" hidden></div>
         </form></div>
     </div>
   </div>`;
-  document.getElementById("back").onclick=()=>go(bt.p,bt.arg);
+  bindBack();
   document.getElementById("copyLink").onclick=()=>copyText(url,"Link copied",()=>selectNode(document.getElementById("profUrl")));
-  document.getElementById("followBtn").onclick=()=>{
+  document.getElementById("followBtn").onclick=async()=>{
     if(!S.user){S.after={follow:id};toast("Log in with your number to get alerts");go("login");return}
-    S.follows.has(id)?S.follows.delete(id):S.follows.add(id);
-    toast(S.follows.has(id)?"Following. We'll WhatsApp you on any change.":"Unfollowed");renderDetail(id);
+    const on=!S.follows.has(id);
+    if(await setFollow(id,on))toast(on?"Following. We'll WhatsApp you on any change.":"Unfollowed");
+    renderDetail(id);
   };
   const ct=document.getElementById("claimThis");if(ct)ct.onclick=()=>{go("biz",id)};
-  document.getElementById("cform").onsubmit=e=>{e.preventDefault();const m=document.getElementById("cmsg");m.textContent=`Received. Reference PW-${1000+id}. We'll review it within 48 hours.`;m.hidden=false;e.target.reset()};
+  /* corrections go to staff with a reference number */
+  document.getElementById("cform").onsubmit=async e=>{e.preventDefault();const m=document.getElementById("cmsg"),btn=e.target.querySelector("button[type=submit]");btn.disabled=true;
+    try{const res=await api("POST",`/restaurants/${id}/corrections`,{role:document.getElementById("c-role").value,message:document.getElementById("c-msg").value.trim()});
+      m.textContent=`Received. Reference ${res.reference}. We'll review it within 48 hours.`;m.hidden=false;e.target.reset()}
+    catch(err){m.textContent=err.message;m.hidden=false}
+    btn.disabled=false};
 }
 
 /* ---------- BUSINESS: find + claim ---------- */
 function renderBiz(preId){
-  const bq=document.getElementById("bq");
-  const draw=()=>{const q=bq.value.trim().toLowerCase();
-    const list=D.filter(r=>!q||(r.name+" "+r.area+" "+r.city).toLowerCase().includes(q)).slice(0,8);
-    document.getElementById("claimres").innerHTML=list.map(r=>`<div class="cr"><div><b>${esc(r.name)}</b><div class="muted">${esc(r.area)}, ${esc(r.city)} ${PROF[r.id]?" · "+LV[PROF[r.id].level]:""}</div></div><button class="pillbtn ${PROF[r.id]?"out":""} sm" data-claim="${r.id}">${PROF[r.id]?"Owner log in":"Claim"}</button></div>`).join("")||`<p class="muted" style="padding-top:14px">Not listed? In the live product you can add your restaurant with its FSSAI licence.</p>`};
+  const bq=document.getElementById("bq"),res=document.getElementById("claimres");let seq=0,timer=null;
+  const claimed=r=>r.badge&&r.badge.level!=="none";
+  const rows=list=>list.map(r=>`<div class="cr"><div><b>${esc(r.name)}</b><div class="muted">${esc(r.area)}, ${esc(r.city)}${claimed(r)?" · "+badgeLabel(r.badge):""}</div></div><button class="pillbtn ${claimed(r)?"out":""} sm" data-claim="${r.id}">${claimed(r)?"Owner log in":"Claim"}</button></div>`).join("");
+  /* restaurants to claim come from the API's search */
+  const draw=()=>{
+    clearTimeout(timer);const q=bq.value.trim();
+    if(q.length<2){res.innerHTML=`<p class="muted" style="padding-top:14px">Type your restaurant's name, area or FSSAI licence number.</p>`;return}
+    timer=setTimeout(async()=>{const my=++seq;let list;
+      try{list=await searchAPI(q)}catch(e){res.innerHTML=`<p class="muted" style="padding-top:14px">${esc(e.message)}</p>`;return}
+      if(my!==seq)return;
+      res.innerHTML=rows(list)||`<p class="muted" style="padding-top:14px">Not listed yet? Search for it from the homepage and tap “Tell us this place exists”. Our team adds it with its FSSAI licence.</p>`;
+    },200);
+  };
   bq.oninput=draw;
-  if(preId){const r=D.find(x=>x.id===preId);bq.value=r.name}
+  if(preId){const r=place(preId);if(r)bq.value=r.name}
   draw();
   document.getElementById("claimpanel").hidden=true;
-  if(S.owner!=null){document.getElementById("claimres").insertAdjacentHTML("beforebegin","")}
   if(preId)startClaim(preId);
 }
 document.getElementById("claimres").onclick=e=>{const b=e.target.closest("[data-claim]");if(b)startClaim(+b.dataset.claim)};
-function startClaim(rid){
-  const r=D.find(x=>x.id===rid);const P=document.getElementById("claimpanel");P.hidden=false;const existing=!!PROF[rid];
-  let ocode="";
+/* claim with the licence number and a code to the owner's mobile; the API records who owns the restaurant */
+async function startClaim(rid){
+  let r=place(rid);
+  if(!r||!r.lic){try{remember([await api("GET","/restaurants/"+rid)]);r=place(rid)}catch(e){toast(e.message);return}}
+  const P=document.getElementById("claimpanel");P.hidden=false;const existing=!!(r.badge&&r.badge.level!=="none");
+  let lic="",ph="",busy=false;
   P.innerHTML=`<div class="eyebrow">${existing?"Owner log in":"Claim"} · step 1 of 2</div><h2 class="h-mid" style="margin-top:10px">${esc(r.name)}</h2>
    <p class="muted" style="margin-top:8px">Enter the FSSAI licence number on your licence and the owner's mobile. We'll send a code to confirm.</p>
    <form class="form" id="clf" style="margin-top:14px">
-     <label for="cl-lic">FSSAI licence number</label><input class="input" id="cl-lic" inputmode="numeric" maxlength="14" required placeholder="14 digits" style="font-family:var(--mono)">
-     <label for="cl-ph">Owner's mobile</label><input class="input" id="cl-ph" inputmode="numeric" maxlength="10" required placeholder="10 digits" style="font-family:var(--mono)" value="${existing?PROF[rid].owner.replace(/\s/g,""):""}">
-     <div class="demo">Demo: licence number is ${r.lic}</div>
+     <label for="cl-lic">FSSAI licence number</label><input class="input" id="cl-lic" inputmode="numeric" maxlength="14" required placeholder="14 digits" style="font-family:var(--mono)" aria-describedby="cl-lic-h">
+     <p class="muted" id="cl-lic-h" style="font-size:13px;margin:-4px 0 4px">The 14-digit number printed on your FSSAI licence or registration certificate.</p>
+     <label for="cl-ph">Owner's mobile</label><input class="input" id="cl-ph" inputmode="numeric" maxlength="10" required placeholder="10 digits" style="font-family:var(--mono)" value="${S.user?S.user.phone:""}">
+     <p class="muted" style="font-size:13px;margin:-4px 0 4px">PlateWatch stores this number to manage your restaurant's profile. You can delete it anytime.</p>
      <div id="clerr"></div>
-     <div><button class="pillbtn" type="submit">Send code</button></div></form>`;
+     <div><button class="pillbtn" type="submit" id="clSend">Send code</button></div></form>`;
   P.scrollIntoView({behavior:"smooth",block:"start"});
-  document.getElementById("clf").onsubmit=e=>{e.preventDefault();
-    const lic=document.getElementById("cl-lic").value.replace(/\D/g,""),ph=document.getElementById("cl-ph").value.replace(/\D/g,"");
-    const err=document.getElementById("clerr");
-    if(lic!==r.lic){err.innerHTML=`<div class="err">That licence number doesn't match our records for this restaurant.</div>`;return}
-    if(!/^[6-9]\d{9}$/.test(ph)){err.innerHTML=`<div class="err">Enter a 10-digit mobile number starting with 6–9.</div>`;return}
-    ocode=String(Math.floor(100000+Math.random()*900000));
-    P.innerHTML=`<div class="eyebrow">Step 2 of 2</div><h2 class="h-mid" style="margin-top:10px">Enter the code</h2><p class="muted" style="margin-top:8px">Sent to +91 ${ph.slice(0,5)} ${ph.slice(5)}</p>
-     <div class="demo">Demo: your code is ${ocode}</div>
-     <form id="clo" style="margin-top:6px"><div class="phonefield"><input id="cl-otp" inputmode="numeric" maxlength="6" placeholder="••••••" aria-label="6-digit code" autocomplete="one-time-code"></div><div id="cloerr"></div><div class="row-actions"><button class="pillbtn" type="submit">Verify and continue</button></div></form>`;
+  /* signed in as the owner's number: record the claim, then open the dashboard */
+  const claim=async errEl=>{
+    try{
+      const res=await api("POST","/owner/claims",{restaurantId:rid,licenceNumber:lic});
+      if(PROF[rid])PROF[rid].owner=fmtPhone(S.user.phone);
+      else PROF[rid]={owner:fmtPhone(S.user.phone),level:"self",verifiedOn:null,adminNote:"",resp:{},ev:{},journey:[]};
+      const back=res.existing||existing;
+      S.owner=rid;S.openCats=new Set([CATS[0].k]);toast(back?"Welcome back":"Restaurant claimed. Start your checkup.");go("dash",back?"overview":"checkup");
+    }catch(err){errEl.innerHTML=errHTML(err.message)}
+  };
+  document.getElementById("clf").onsubmit=async e=>{e.preventDefault();if(busy)return;
+    lic=document.getElementById("cl-lic").value.replace(/\D/g,"");ph=document.getElementById("cl-ph").value.replace(/\D/g,"");
+    const err=document.getElementById("clerr"),btn=document.getElementById("clSend");
+    if(!/^\d{14}$/.test(lic)){err.innerHTML=errHTML("Enter the 14-digit licence number.");return}
+    /* checked here too, so a typo doesn't cost a code; the API checks it again */
+    if(lic!==r.lic){err.innerHTML=errHTML("That licence number doesn't match our records for this restaurant.");return}
+    if(!/^[6-9]\d{9}$/.test(ph)){err.innerHTML=errHTML("Enter a 10-digit mobile number starting with 6–9.");return}
+    busy=true;btn.disabled=true;err.innerHTML="";
+    if(S.user&&S.user.phone===ph){await claim(err);busy=false;btn.disabled=false;return}
+    let info;
+    try{info=await SIGNIN.request(ph)}catch(x){err.innerHTML=errHTML(x.message);busy=false;btn.disabled=false;return}
+    busy=false;
+    P.innerHTML=`<div class="eyebrow">Step 2 of 2</div><h2 class="h-mid" style="margin-top:10px">Enter the code</h2><p class="muted" style="margin-top:8px">${sentTo(ph,info.channel)}</p>${devHint(info.channel)}
+     <form id="clo" style="margin-top:6px"><div class="phonefield"><input id="cl-otp" inputmode="numeric" maxlength="6" placeholder="••••••" aria-label="6-digit code" autocomplete="one-time-code"></div><div id="cloerr"></div><div class="row-actions"><button class="pillbtn" type="submit" id="clVer">Verify and continue</button><button class="x" type="button" id="clBack">Start again</button></div></form>`;
     document.getElementById("cl-otp").focus();
-    document.getElementById("clo").onsubmit=ev=>{ev.preventDefault();
-      if(document.getElementById("cl-otp").value.trim()!==ocode){document.getElementById("cloerr").innerHTML=`<div class="err">That code doesn't match. Check the demo code above.</div>`;return}
-      if(!PROF[rid])PROF[rid]={owner:ph.slice(0,5)+" "+ph.slice(5),level:"self",verifiedOn:null,adminNote:"",resp:{},ev:{},journey:[]};
-      S.owner=rid;S.openCats=new Set([CATS[0].k]);toast(existing?"Welcome back":"Restaurant claimed. Start your checkup.");go("dash",existing?"overview":"checkup");
+    document.getElementById("clBack").onclick=()=>startClaim(rid);
+    document.getElementById("clo").onsubmit=async ev=>{ev.preventDefault();if(busy)return;
+      const cerr=document.getElementById("cloerr"),code=document.getElementById("cl-otp").value.replace(/\D/g,"");
+      if(code.length!==6){cerr.innerHTML=errHTML("Enter the 6-digit code.");return}
+      busy=true;document.getElementById("clVer").disabled=true;cerr.innerHTML="";
+      try{await SIGNIN.verify(ph,code,true)}
+      catch(x){cerr.innerHTML=errHTML(x.message);busy=false;document.getElementById("clVer").disabled=false;return}
+      await claim(cerr);busy=false;const v=document.getElementById("clVer");if(v)v.disabled=false;
     };
   };
 }
 
 /* ---------- DASHBOARD ---------- */
+/* the owner's checkup and reports come from the API, into PROF[rid]: the shape the dashboard already renders */
+async function loadDash(rid){
+  const [ck,reps]=await Promise.all([api("GET",`/owner/restaurants/${rid}/checkup`),api("GET",`/owner/restaurants/${rid}/reports`)]);
+  /* staff can change weights and expiry in admin: score with the server's values */
+  ck.categories.forEach(c=>{if(CAT[c.key])CAT[c.key].expiry=c.expiryDays});
+  ck.requirements.forEach(q=>{if(REQ[q.id]){REQ[q.id].w=q.weight;REQ[q.id].crit=q.critical}});
+  const p=PROF[rid]||(PROF[rid]={journey:[]});
+  Object.assign(p,{r:ck.restaurant,owner:S.user?fmtPhone(S.user.phone):"",level:ck.level,verifiedOn:ck.verifiedOn,adminNote:ck.adminNote||"",resp:{},ev:{},pausedPublicly:ck.score.pausedPublicly,publicGallery:ck.publicGallery});
+  ck.requirements.forEach(q=>{if(q.answer)p.resp[q.id]=q.answer});
+  [...ck.evidence].reverse().forEach(e=>(p.ev[e.requirementId]=p.ev[e.requirementId]||[]).push({id:e.id,name:e.name,type:e.kind,date:e.capturedOn,status:e.status,note:e.note||"",url:e.kind==="photo"?e.url:null,ai:null,flag:e.flagged}));
+  S.ownerReports=reps.items;
+}
+async function openDash(tab){
+  const rid=S.owner,el=document.getElementById("dash");
+  el.innerHTML=`<p class="muted" style="padding-block:60px">Loading your dashboard…</p>`;
+  try{await loadDash(rid)}
+  catch(e){
+    if([401,403,404].includes(e.status)){S.owner=null;toast(e.status===401?"Log in again to open your dashboard.":e.message);go("biz");return}
+    el.innerHTML=`<div style="padding-block:60px"><div class="err">${esc(e.message)}</div><button class="pillbtn out sm" id="dashRetry" style="margin-top:14px">Try again</button></div>`;
+    document.getElementById("dashRetry").onclick=()=>openDash(tab);return;
+  }
+  if(S.owner===rid&&!document.getElementById("p-dash").hidden)renderDash(tab);
+}
+/* after a change: re-read from the API and redraw the same tab */
+async function reloadDash(tab){try{await loadDash(S.owner)}catch(e){toast(e.message)}if(S.owner!=null&&!document.getElementById("p-dash").hidden)renderDash(tab)}
 function notifs(rid){const p=PROF[rid],out=[];
-  REPORTS.filter(x=>x.rid===rid&&RP.visibleToRestaurant(x)&&!x.response&&x.status!=="resolved").forEach(x=>out.push(`New food-safety report received (${fmt(x.date)}). <button class="x" data-tab="reports">Respond</button>`));
+  (S.ownerReports||[]).filter(x=>!x.response).forEach(x=>out.push(`New food-safety report received (${fmt(x.date)}). <button class="x" data-tab="reports">Respond</button>`));
   Object.values(p.ev).flat().filter(e=>e.status==="more").forEach(e=>out.push(`Reviewer asked for more evidence: ${esc(e.name)}. <button class="x" data-tab="checkup">Open checkup</button>`));
   Object.values(p.ev).flat().filter(e=>e.status==="rejected").forEach(e=>out.push(`Evidence rejected: ${esc(e.name)}. Upload a clearer file.`));
   if(p.adminNote)out.push(esc(p.adminNote));
-  const vf=MAP.verif(rid);if(vf.paused)out.push(`PlateWatch verification paused: ${esc(vf.paused)}.`);
+  const vf=verif(rid);if(vf.paused)out.push(`PlateWatch verification paused: ${esc(vf.paused)}.`);
   return out;
 }
 /* the 3 highest-impact open items: critical first, then highest weight, then expired evidence */
@@ -657,8 +773,8 @@ function nextBestHTML(sc,rid){
     <ol>${top.map(m=>`<li><div class="nba-t"><span>${esc(m.r.text)}</span><span class="nba-m">${m.r.crit?"<b>Critical</b> · ":""}Weight ${m.r.w} · ${CAT[m.r.cat].name} · ${m.why}</span></div><button class="pillbtn out sm" data-jump="${m.r.id}">Fix this</button></li>`).join("")}${exp.map(x=>`<li><div class="nba-t"><span>${esc(x.r.text)}</span><span class="nba-m"><b>${x.left===0?"Expires today":`Expires in ${x.left} day${x.left===1?"":"s"}`}</b> · ${CAT[x.r.cat].name} · evidence valid ${CAT[x.r.cat].expiry} days</span></div><button class="pillbtn out sm" data-jump="${x.r.id}">Refresh</button></li>`).join("")}</ol></div>`;
 }
 function renderDash(tab){
-  const rid=S.owner,r=D.find(x=>x.id===rid),p=PROF[rid],sc=scoreOf(rid),ec=evCounts(rid);
-  const nrep=REPORTS.filter(x=>x.rid===rid&&RP.visibleToRestaurant(x)&&!x.response&&x.status!=="resolved").length;
+  const rid=S.owner,p=PROF[rid],r=p.r,sc=scoreOf(rid),ec=evCounts(rid);
+  const nrep=(S.ownerReports||[]).filter(x=>!x.response).length;
   const tabs=[["overview","Overview"],["checkup","Food Safety Checkup"],["reports","Reports"+(nrep?`<span class="n">${nrep}</span>`:"")],["journey","Journey"],["qr","QR code"]];
   let body="";
   if(tab==="overview"){
@@ -687,7 +803,7 @@ function renderDash(tab){
       <h3 style="font-size:20px;font-weight:700;font-stretch:108%;margin:34px 0 12px">Spot checks</h3>
       ${SCM.historyHTML(rid)}
     </div></div>
-    <section class="sc-preview"><span class="tag tag-self">What diners see</span><h2 class="h-mid">Your kitchen gallery</h2><p class="gal-sub">Only photos our reviewers approved. Spot-check photos are tagged.</p>${SCM.galleryHTML(rid)}</section>`;
+    <section class="sc-preview"><span class="tag tag-self">What diners see</span><h2 class="h-mid">Your kitchen gallery</h2><p class="gal-sub">${p.publicGallery?"Only photos our reviewers approved. Spot-check photos are tagged.":"Photos our reviewers approve collect here. Diners will see them once photo publishing is switched on, after faces can be blurred automatically."}</p>${SCM.galleryHTML(rid)}</section>`;
   }
   if(tab==="checkup"){
     body=`<div class="stick"><span>Compliance score now <b>${sc.overall}/100</b>${paused(rid)?" (paused publicly)":""} · ${sc.done}/${sc.tot} met${sc.unanswered?` · ${sc.unanswered} unanswered`:""}</span><span class="muted" style="font-size:13px">Based on public FSSAI hygiene parameters. Not an official FSSAI audit.</span></div>
@@ -704,13 +820,13 @@ function renderDash(tab){
     <div style="padding-block:34px 70px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">${p.level==="self"?`<button class="pillbtn" id="reqVer2" ${sc.unanswered?"disabled":""}>Request verification</button>`:lvlFor(rid)}<span class="muted">${sc.unanswered?sc.unanswered+" requirement(s) still unanswered":"All requirements answered"}</span></div>`;
   }
   if(tab==="reports"){
-    const reps=REPORTS.filter(x=>x.rid===rid&&RP.visibleToRestaurant(x));
-    body=`<div style="padding-block:30px 70px;max-width:760px"><p class="muted" style="margin-top:0">Reports stay private until our team moderates them. Your response is shown next to the report once it's published.</p>
-    ${reps.map(x=>`<div class="rep"><div class="top">${rsPill(x.status)}<span>${fmt(x.date)}</span>${x.photo?"<span>Photo attached</span>":""}${x.flag?"<span>You flagged this as incorrect</span>":""}</div><p>${esc(x.text)}</p>
-      ${x.response?`<div class="resp"><span class="tag tag-self">Your response · ${fmt(x.response.date)}</span><div>${esc(x.response.text)}</div>${x.response.ev?`<div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${esc(x.response.ev)}</div>`:""}</div>`:
-      `<form class="form" data-resp="${x.id}" style="margin-top:14px"><label for="rsp-${x.id}">Your response</label><textarea class="input" id="rsp-${x.id}" rows="2" required placeholder="e.g. Pest-control treatment done on 18 Sep, certificate attached."></textarea>
+    const reps=S.ownerReports||[];
+    body=`<div style="padding-block:30px 70px;max-width:760px"><p class="muted" style="margin-top:0">Reports show here once our team has accepted them and the reporter agreed to share them. Your response is shown next to the report.</p>
+    ${reps.map(x=>`<div class="rep"><div class="top">${rsPill("accepted")}<span>${fmt(x.date)}</span>${x.evidence.includes("photo")?"<span>Photo attached</span>":""}${x.flagged?"<span>You flagged this as incorrect</span>":""}</div><p>${esc(x.text)}</p>
+      ${x.response?`<div class="resp"><span class="tag tag-self">Your response · ${fmt(x.response.date)}</span><div>${esc(x.response.text)}</div>${x.response.hasEvidence?`<div class="muted" style="font-size:12px;margin-top:4px">Evidence attached</div>`:""}</div>`:
+      `<form class="form" data-resp="${x.id}" style="margin-top:14px"><label for="rsp-${x.id}">Your response</label><textarea class="input" id="rsp-${x.id}" rows="2" required minlength="5" maxlength="1000" placeholder="e.g. Pest-control treatment done on 18 Sep, certificate attached."></textarea>
         <label class="upl" style="width:fit-content">+ Attach evidence<input type="file" id="rspf-${x.id}" accept="image/*,video/*,.pdf"></label>
-        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center"><button class="pillbtn sm" type="submit">Post response</button>${x.flag?"":`<button class="x" type="button" data-flag="${x.id}">Report incorrect information</button>`}</div></form>`}</div>`).join("")||`<p class="muted">No reports yet.</p>`}</div>`;
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center"><button class="pillbtn sm" type="submit">Post response</button>${x.flagged?"":`<button class="x" type="button" data-flag="${x.id}">Report incorrect information</button>`}</div></form>`}</div>`).join("")||`<p class="muted">No reports yet.</p>`}</div>`;
   }
   if(tab==="journey"){
     body=`<div style="padding-block:30px 70px;max-width:760px"><span class="tag tag-self">Your score over time</span>${journeySVG(rid)}${journeyList(rid)}
@@ -730,19 +846,25 @@ function renderDash(tab){
     <div class="dtabs" role="tablist">${tabs.map(([k,l])=>`<button role="tab" data-tab="${k}" aria-selected="${k===tab}">${l}</button>`).join("")}</div>${body}`;
   S.dashTab=tab;
   if(tab==="qr"){try{new QRCode(document.getElementById("qr"),{text:"https://platewatch.in/restaurant/"+rid+"/safety",width:170,height:170,colorDark:"#0A0A0A",colorLight:"#FFFFFF"})}catch(e){document.getElementById("qr").innerHTML='<span style="font:12px var(--mono);color:#0A0A0A;line-height:1.4">QR preview unavailable</span>'}
-    document.getElementById("copyqr").onclick=()=>{navigator.clipboard?.writeText(document.getElementById("qrurl").textContent).then(()=>toast("Link copied")).catch(()=>toast("Select the link to copy it"))}}
+    document.getElementById("copyqr").onclick=()=>copyText(document.getElementById("qrurl").textContent,"Link copied",()=>selectNode(document.getElementById("qrurl")))}
   const rv=document.getElementById("reqVer")||document.getElementById("reqVer2");
-  if(rv)rv.onclick=()=>{p.level="pending";p.adminNote="";p.reqOn=TODAY.toISOString().slice(0,10);toast("Verification requested. We'll review your evidence.");renderDash(tab)};
-  const sn=document.getElementById("snap");if(sn)sn.onclick=()=>{p.journey.push({m:"Sep 2026",score:sc.overall,kind:"Snapshot",notes:[sc.missing.length+" requirement(s) open"]});toast("Snapshot saved");renderDash("journey")};
+  if(rv)rv.onclick=async()=>{rv.disabled=true;
+    try{await api("POST",`/owner/restaurants/${rid}/verification-request`);toast("Verification requested. We'll review your evidence.")}catch(err){toast(err.message)}
+    await reloadDash(tab)};
+  /* one snapshot per month: saving again replaces this month's */
+  const sn=document.getElementById("snap");if(sn)sn.onclick=()=>{const m=TODAY.toLocaleDateString("en-GB",{month:"short",year:"numeric"});p.journey=p.journey.filter(j=>j.m!==m).concat({m,score:sc.overall,kind:"Snapshot",notes:[sc.missing.length+" requirement(s) open"]});toast("Snapshot saved");renderDash("journey")};
 }
 document.getElementById("dash").addEventListener("click",e=>{
   const rid=S.owner,p=PROF[rid];
   const t=e.target.closest("[data-tab]");if(t){renderDash(t.dataset.tab);window.scrollTo(0,0);return}
   if(e.target.id==="viewPub"){go("detail",rid);return}
   if(e.target.id==="ownOut"){S.owner=null;toast("Signed out of dashboard");go("biz");return}
-  const a=e.target.closest("[data-ans]");if(a){p.resp[a.dataset.q]=a.dataset.ans;keepOpen();renderDash("checkup");return}
+  /* answers show at once and are saved in the background; a failure puts the old answer back */
+  const a=e.target.closest("[data-ans]");if(a){const q=a.dataset.q,ans=a.dataset.ans,prev=p.resp[q];p.resp[q]=ans;keepOpen();renderDash("checkup");
+    api("PUT",`/owner/restaurants/${rid}/answers/${q}`,{answer:ans}).catch(err=>{if(prev)p.resp[q]=prev;else delete p.resp[q];toast(err.message);keepOpen();renderDash("checkup")});return}
   const j=e.target.closest("[data-jump]");if(j){const q=REQ[j.dataset.jump];S.openCats.add(q.cat);renderDash("checkup");const el=document.getElementById("req-"+q.id);if(el)el.scrollIntoView({block:"center"});return}
-  const fl=e.target.closest("[data-flag]");if(fl){const x=REPORTS.find(r=>r.id===+fl.dataset.flag);x.flag=true;toast("Flagged for our team to re-check");renderDash("reports");return}
+  const fl=e.target.closest("[data-flag]");if(fl){fl.disabled=true;
+    api("POST",`/owner/restaurants/${rid}/reports/${fl.dataset.flag}/flag`).then(()=>{toast("Flagged for our team to re-check");return reloadDash("reports")},err=>{fl.disabled=false;toast(err.message)});return}
   const sch=e.target.closest("[data-sc-chat]");if(sch){SCM.openChat(+sch.dataset.scChat);return}
 });
 function keepOpen(){S.openCats=new Set([...document.querySelectorAll("details.cat[open]")].map(d=>d.dataset.cat))}
@@ -752,355 +874,41 @@ document.getElementById("dash").addEventListener("change",e=>{
   const sci=e.target.closest("[data-sc]");
   if(sci&&sci.files[0]){const r=SCM.addPhoto(+sci.dataset.sc,sci.dataset.scItem,sci.files[0]);toast(r&&r.complete?(r.check.status==="answered"?"Spot check answered on time":"Spot check answered late"):"Photo added");renderDash(S.dashTab||"overview");return}
   const up=e.target.closest("[data-up]");
+  /* upload to storage, attach it to the requirement, then re-read the checkup; a reviewer sees it in Admin → Evidence */
   if(up&&up.files[0]){const f=up.files[0],q=up.dataset.up;
-    const type=f.type.startsWith("image/")?"photo":f.type.startsWith("video/")?"video":"document";
-    const noteEl=document.querySelector(`[data-note="${q}"]`);
-    let url=null;if(type==="photo"){try{url=URL.createObjectURL(f)}catch(_){}}
-    (p.ev[q]=p.ev[q]||[]).push({id:EVID++,name:f.name,type,date:TODAY.toISOString().slice(0,10),status:"submitted",note:noteEl?noteEl.value.trim():"",url,flag:false,ai:type==="photo"?aiFor(q):type==="video"?["Video received. Frame-by-frame review runs on the live platform."]:null});
-    if(!p.resp[q])p.resp[q]="yes";
-    /* PlateWatch verified pauses automatically while this evidence waits for review */
-    keepOpen();renderDash("checkup");const el=document.getElementById("req-"+q);if(el)el.scrollIntoView({block:"center"});toast("Evidence submitted");
+    const noteEl=document.querySelector(`[data-note="${q}"]`),note=noteEl?noteEl.value.trim():"";
+    up.disabled=true;toast("Uploading…");
+    (async()=>{
+      try{const uploadId=await uploadFile(f,"evidence");await api("POST",`/owner/restaurants/${rid}/evidence`,{requirementId:q,uploadId,...(note?{note}:{})});toast("Evidence submitted. A reviewer will check it.")}
+      catch(err){toast(err.message)}
+      keepOpen();await reloadDash("checkup");const el=document.getElementById("req-"+q);if(el)el.scrollIntoView({block:"center"});
+    })();
   }
 });
-document.getElementById("dash").addEventListener("submit",e=>{
+document.getElementById("dash").addEventListener("submit",async e=>{
   const f=e.target.closest("[data-resp]");if(!f)return;e.preventDefault();
-  const id=+f.dataset.resp,x=REPORTS.find(r=>r.id===id);const file=document.getElementById("rspf-"+id).files[0];
-  x.response={text:document.getElementById("rsp-"+id).value.trim(),date:TODAY.toISOString().slice(0,10),ev:file?file.name:null};
-  RP.ownerResponded(x);
-  toast("Response posted. It appears with the report once published.");renderDash("reports");
+  const id=+f.dataset.resp,file=document.getElementById("rspf-"+id).files[0],text=document.getElementById("rsp-"+id).value.trim();
+  const btn=f.querySelector("button[type=submit]");btn.disabled=true;
+  try{
+    const uploadId=file?await uploadFile(file,"response"):null;
+    await api("POST",`/owner/restaurants/${S.owner}/reports/${id}/response`,{text,...(uploadId?{uploadId}:{})});
+    toast("Response posted. It shows next to the report.");await reloadDash("reports");
+  }catch(err){toast(err.message);btn.disabled=false}
 });
 
-/* ---------- ADMIN ---------- */
-S.adm={q:"",filter:"all",sort:"new",view:"list",sel:null,box:null,anim:false,rejecting:null,scRejecting:null};
-const svg=(d,extra)=>`<svg class="ad-ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra||""}>${d}</svg>`;
-const ICO={
- ok:svg('<circle cx="8" cy="8" r="6.25"/><path d="m5.4 8.2 1.8 1.8 3.4-3.6"/>'),
- warn:svg('<path d="M8 2.2 14.3 13H1.7Z"/><path d="M8 6.4v3"/><path d="M8 11.4v.1"/>'),
- info:svg('<circle cx="8" cy="8" r="6.25"/><path d="M8 7.2v3.6"/><path d="M8 5.2v.1"/>'),
- flag:svg('<path d="M3.5 14V2.5"/><path d="M3.5 3h8.2l-1.6 3 1.6 3H3.5"/>'),
- img:svg('<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><circle cx="5.8" cy="6.2" r="1.2"/><path d="m2.5 12 3.6-3.4 2.4 2.2 2.2-1.9 2.8 2.6"/>'),
- doc:svg('<path d="M4 1.8h5.2L12.5 5v9.2H4Z"/><path d="M9 1.8V5h3.5"/><path d="M6 8.4h4.5M6 10.8h4.5"/>'),
- x:svg('<path d="m4 4 8 8M12 4l-8 8"/>'),
- search:svg('<circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.3 3.3"/>'),
- expand:svg('<path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9"/>')};
-const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
-const EVST={submitted:["Pending review","pend"],more:["More requested","more"],verified:["Approved","ok"],rejected:["Rejected","no"]};
-const adBadge=e=>`<span class="ad-badge ad-b-${EVST[e.status][1]}">${EVST[e.status][0]}</span>${e.flag?`<span class="ad-badge ad-b-flag">${ICO.flag}Flagged</span>`:""}`;
-const adObs=o=>{const k=o[0]==="✓"?"ok":o[0]==="⚠"?"warn":"info";return `<li class="ad-obs ad-obs-${k}">${ICO[k]}<span>${esc(k==="info"?o:o.slice(1).trim())}</span></li>`};
-const adEmpty=(h,p,extra)=>`<div class="ad-empty"><span class="ad-empty-mark" aria-hidden="true">${ICO.ok}</span><h3>${h}</h3><p>${p}</p>${extra||""}</div>`;
-const place=rid=>D.find(x=>x.id===rid);
-/* every evidence item still waiting on a reviewer */
-function adQueue(){const out=[];Object.entries(PROF).forEach(([rid,p])=>Object.entries(p.ev).forEach(([q,list])=>list.forEach(e=>{if(e.status==="submitted"||e.status==="more")out.push({rid:+rid,q,e})})));return out}
-function adFind(id){for(const [rid,p] of Object.entries(PROF))for(const [q,list] of Object.entries(p.ev)){const e=list.find(y=>y.id===id);if(e)return {rid:+rid,q,e}}return null}
-function adExpiring(){let n=0;Object.values(PROF).forEach(p=>Object.entries(p.ev).forEach(([q,list])=>list.forEach(e=>{if(e.status==="rejected")return;const left=CAT[REQ[q].cat].expiry-daysAgo(e.date);if(left>=0&&left<=7)n++})));return n}
-function adItems(){
-  const A=S.adm,s=A.q.trim().toLowerCase();
-  const pri=x=>(REQ[x.q].crit?100:0)+REQ[x.q].w*10+(x.e.flag?5:0)+(x.e.status==="more"?3:0);
-  return adQueue().filter(({rid,q,e})=>{const r=place(rid);
-    if(s&&!(e.name+" "+r.name+" "+r.area+" "+r.city+" "+REQ[q].text+" "+CAT[REQ[q].cat].name).toLowerCase().includes(s))return false;
-    if(A.filter==="pending")return e.status==="submitted";
-    if(A.filter==="flagged")return !!e.flag;
-    if(A.filter==="recent")return daysAgo(e.date)<=3;
-    return true;
-  }).sort(A.sort==="old"?(a,b)=>a.e.date.localeCompare(b.e.date)||a.e.id-b.e.id
-    :A.sort==="pri"?(a,b)=>pri(b)-pri(a)||a.e.date.localeCompare(b.e.date)
-    :(a,b)=>b.e.date.localeCompare(a.e.date)||b.e.id-a.e.id);
-}
-function adPreview(e,big){
-  const cls="ad-pv"+(big?" ad-pv-lg":"");
-  if(e.url)return `<button class="${cls}" data-box="${e.id}" aria-label="Open larger preview of ${esc(e.name)}"><img src="${e.url}" alt="" onload="this.parentNode.classList.add('ld')" onerror="this.parentNode.classList.add('ld')"><span class="ad-pv-zoom">${ICO.expand}</span></button>`;
-  return `<${big?"div":`button data-open="${e.id}" aria-label="Open details for ${esc(e.name)}"`} class="${cls} ad-pv-none">${e.type==="photo"?ICO.img:ICO.doc}<span>No preview</span><em>${e.type}</em></${big?"div":"button"}>`;
-}
-function adEvActs(e){return `<button class="ad-link${e.flag?" is-on":""}" data-e="flag" data-eid="${e.id}" aria-pressed="${!!e.flag}">${ICO.flag}${e.flag?"Flagged":"Flag"}</button>
-  <span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-e="more" data-eid="${e.id}">Request more evidence</button><button class="ad-btn ad-btn-danger" data-e="rejected" data-eid="${e.id}">Reject</button><button class="ad-btn ad-btn-pri" data-e="verified" data-eid="${e.id}">Approve</button></span>`}
-function adEvRow({rid,q,e}){const r=place(rid),p=PROF[rid],req=REQ[q];
-  return `<article class="ad-row${S.adm.sel===e.id?" is-sel":""}" data-row="${e.id}">
-    <div class="ad-row-media">${adPreview(e)}</div>
-    <div class="ad-row-body">
-      <div class="ad-row-top">
-        <div class="ad-row-id">
-          <h3 class="ad-fn"><button data-open="${e.id}">${esc(e.name)}</button></h3>
-          <div class="ad-meta"><span class="ad-meta-strong">${esc(r.name)}</span><span>${esc(r.area)}, ${esc(r.city)}</span><span>${CAT[req.cat].name}</span><span>Submitted ${ago(e.date)}</span></div>
-        </div>
-        <div class="ad-badges">${adBadge(e)}</div>
-      </div>
-      <div class="ad-row-grid">
-        <section class="ad-sec" aria-label="Evidence details">
-          <h4 class="ad-lbl">Evidence details</h4>
-          <dl class="ad-dl">
-            <div class="ad-dl-wide"><dt>Description</dt><dd>${esc(req.text)}${req.crit?` <span class="ad-crit">Critical</span>`:""}</dd></div>
-            <div><dt>Evidence type</dt><dd>${cap(e.type)}</dd></div>
-            <div><dt>Submitted by</dt><dd>Owner · +91 ${esc(p.owner)}</dd></div>
-            <div><dt>Submitted date</dt><dd>${fmt(e.date)}</dd></div>
-            <div><dt>Verification status</dt><dd>${LV[p.level]}</dd></div>
-          </dl>
-          ${e.note?`<p class="ad-note"><span class="ad-lbl">Owner's note</span>${esc(e.note)}</p>`:""}
-        </section>
-        <section class="ad-sec" aria-label="AI observations">
-          <h4 class="ad-lbl">AI observations <span class="ad-lbl-sub">Assistive · not a certification</span></h4>
-          ${e.ai?`<ul class="ad-obs-list">${e.ai.map(adObs).join("")}</ul>`:`<p class="ad-muted">No automated checks for ${e.type}s. Review the file manually.</p>`}
-        </section>
-      </div>
-      <div class="ad-acts">${adEvActs(e)}</div>
-    </div>
-  </article>`}
-function adListHTML(){
-  const all=adQueue().length,list=adItems();
-  if(!all)return adEmpty("No evidence waiting for review","Everything is currently up to date.");
-  if(!list.length)return adEmpty("No evidence matches these filters","Try a different search or filter.",`<button class="ad-btn ad-btn-out" data-clear>Clear filters</button>`);
-  return list.map(adEvRow).join("");
-}
-function adDrawList(){
-  const n=adItems().length;
-  document.getElementById("adList").innerHTML=adListHTML();
-  document.getElementById("admCount").textContent=`${n} ${n===1?"item":"items"}`;
-}
-function adPanelHTML(){
-  const it=S.adm.sel==null?null:adFind(S.adm.sel);if(!it)return "";
-  const {rid,q,e}=it,r=place(rid),p=PROF[rid],req=REQ[q],c=CAT[req.cat],sc=scoreOf(rid);
-  const until=new Date(e.date);until.setDate(until.getDate()+c.expiry);
-  const prev=(p.ev[q]||[]).filter(x=>x.id!==e.id).sort((a,b)=>b.date.localeCompare(a.date));
-  const waiting=e.status==="submitted"||e.status==="more";
-  return `<div class="ad-scrim${S.adm.anim?" in":""}" data-close="panel"></div>
-  <aside class="ad-panel${S.adm.anim?" in":""}" role="dialog" aria-modal="true" aria-labelledby="adPanelTitle">
-    <div class="ad-panel-head">
-      <div><div class="ad-lbl">Evidence · ${esc(r.name)}</div><h2 id="adPanelTitle" class="ad-panel-title">${esc(e.name)}</h2><div class="ad-badges">${adBadge(e)}</div></div>
-      <button class="ad-iconbtn" data-close="panel" aria-label="Close panel" id="adPanelClose">${ICO.x}</button>
-    </div>
-    <div class="ad-panel-body">
-      ${adPreview(e,true)}
-      <section class="ad-psec"><h4 class="ad-lbl">Metadata</h4>
-        <dl class="ad-kv">
-          <dt>Restaurant</dt><dd>${esc(r.name)}</dd>
-          <dt>Location</dt><dd>${esc(r.area)}, ${esc(r.city)}</dd>
-          <dt>Category</dt><dd>${c.name}</dd>
-          <dt>Requirement</dt><dd>${esc(req.text)}${req.crit?` <span class="ad-crit">Critical</span>`:""}</dd>
-          <dt>Weight</dt><dd>${req.w} of 5</dd>
-          <dt>Evidence type</dt><dd>${cap(e.type)}</dd>
-          <dt>Submitted by</dt><dd>Owner · +91 ${esc(p.owner)}</dd>
-          <dt>Submitted</dt><dd>${fmt(e.date)} · ${ago(e.date)}</dd>
-          <dt>Valid until</dt><dd>${fmt(until.toISOString().slice(0,10))} · ${c.expiry}-day window</dd>
-          <dt>Verification</dt><dd>${LV[p.level]}</dd>
-          <dt>Current score</dt><dd>${sc.overall}/100 · ${sc.done}/${sc.tot} met</dd>
-        </dl>
-      </section>
-      <section class="ad-psec"><h4 class="ad-lbl">AI observations <span class="ad-lbl-sub">Assistive · not a certification</span></h4>
-        ${e.ai?`<ul class="ad-obs-list">${e.ai.map(adObs).join("")}</ul>`:`<p class="ad-muted">No automated checks for ${e.type}s.</p>`}
-      </section>
-      <section class="ad-psec"><h4 class="ad-lbl">Previous submissions <span class="ad-lbl-sub">Same requirement</span></h4>
-        ${prev.length?`<ul class="ad-hist">${prev.map(x=>`<li><span class="ad-hist-n">${esc(x.name)}</span><span class="ad-hist-d">${fmt(x.date)}</span>${adBadge(x)}</li>`).join("")}</ul>`:`<p class="ad-muted">First submission for this requirement.</p>`}
-      </section>
-      <section class="ad-psec"><h4 class="ad-lbl">Reviewer notes</h4>
-        ${e.note?`<p class="ad-note"><span class="ad-lbl">Owner's note</span>${esc(e.note)}</p>`:""}
-        <textarea class="ad-textarea" rows="3" data-rnote="${e.id}" placeholder="Internal note for other reviewers" aria-label="Reviewer note">${esc(e.reviewNote||"")}</textarea>
-        <p class="ad-hint">Internal only. Not shown to the restaurant.</p>
-      </section>
-    </div>
-    ${waiting?`<div class="ad-panel-foot ad-acts">${adEvActs(e)}</div>`:""}
-  </aside>`;
-}
-function adBoxHTML(){
-  const it=S.adm.box==null?null:adFind(S.adm.box);if(!it||!it.e.url)return "";
-  const r=place(it.rid);
-  return `<div class="ad-lb" role="dialog" aria-modal="true" aria-label="Evidence preview" data-close="box">
-    <figure><img src="${it.e.url}" alt="${esc(it.e.name)}"><figcaption><span>${esc(it.e.name)}</span><span>${esc(r.name)} · ${fmt(it.e.date)}</span></figcaption></figure>
-    <button class="ad-iconbtn ad-lb-x" data-close="box" aria-label="Close preview" id="adBoxClose">${ICO.x}</button>
-  </div>`;
-}
-function adOverlays(){
-  const el=document.getElementById("admOverlay");if(!el)return;
-  el.innerHTML=adPanelHTML()+adBoxHTML();
-  document.documentElement.classList.toggle("ad-lock",!!el.innerHTML);
-  S.adm.anim=false;
-}
-/* community reports: moderation queue */
-const REJECT_REASONS=["No food-safety issue described","Evidence doesn't match the outlet","Duplicate of another report","Personal or abusive content","Not enough detail to act on"];
-function adReportRow(x){
-  const r=x.rid?place(x.rid):null,rej=S.adm.rejecting===x.id,pend=x.status==="pending";
-  return `<article class="ad-row ad-row-plain">
-    <div class="ad-row-body">
-      <div class="ad-row-top">
-        <div class="ad-row-id"><h3 class="ad-fn">${esc(RP.outletName(x))}${r?"":` <span class="ad-td-muted">(not listed)</span>`}</h3><div class="ad-meta"><span>${r?esc(r.area)+", "+esc(r.city):esc(x.place.area)}</span>${x.cat?`<span>${esc(x.cat)}</span>`:""}<span>${esc(x.ref)}</span><span>Received ${ago(x.date)}</span>${x.channel==="whatsapp"?"<span>via WhatsApp</span>":""}</div></div>
-        <div class="ad-badges">${pend?`<span class="ad-badge ad-b-pend">${x.askMore?"More requested":"Pending"}</span>`:rsPill(x.status)}${x.share===false?`<span class="ad-badge">Kept private</span>`:""}${x.flag?`<span class="ad-badge ad-b-flag">${ICO.flag}Restaurant flagged as incorrect</span>`:""}</div>
-      </div>
-      <blockquote class="ad-quote">${esc(x.text)}</blockquote>
-      ${x.response?`<div class="ad-note"><span class="ad-lbl">Restaurant response</span>${esc(x.response.text)}</div>`:""}
-      <dl class="ad-facts"><div><dt>Evidence</dt><dd>${esc(RP.evidenceText(x))}</dd></div><div><dt>Reporter</dt><dd>${x.user?cap(RP.ageText(x.user)):"No verified number"}</dd></div><div><dt>Counts toward escalation</dt><dd>${esc(RP.countsInfo(x))}</dd></div></dl>
-      ${rej?`<div class="ad-reason"><label class="ad-select"><span>Reason</span><select id="admReason">${REJECT_REASONS.map(o=>`<option>${o}</option>`).join("")}</select></label><button class="ad-btn ad-btn-out" data-m="cancel" data-rep="${x.id}">Cancel</button><button class="ad-btn ad-btn-danger ad-btn-danger-solid" data-m="reject-go" data-rep="${x.id}">Reject report</button></div>`:""}
-      <div class="ad-acts">${pend?`<button class="ad-link" data-m="coord" data-rep="${x.id}">Mark as coordinated</button><span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-m="more" data-rep="${x.id}" ${!x.user||x.askMore?"disabled":""}>Ask reporter for more</button><button class="ad-btn ad-btn-danger" data-m="reject" data-rep="${x.id}">Reject with reason</button><button class="ad-btn ad-btn-pri" data-m="accept" data-rep="${x.id}">Accept</button></span>`
-        :`<span></span><span class="ad-acts-main"><button class="ad-btn ad-btn-danger" data-m="reject" data-rep="${x.id}">Reject with reason</button><button class="ad-btn ad-btn-pri" data-m="keep" data-rep="${x.id}">Keep published</button></span>`}</div>
-    </div></article>`;
-}
-/* escalations: fast-lane outlets waiting for a moderator, escalations sent, and outlets being watched */
-function adWatchHTML(urg){
-  const rows=D.map(r=>{const s=RP.standard(r.id),f=RP.fastLane(r.id),l=RP.lastEscalation(r.id);return {r,s,f,l,u:urg.some(o=>o.r.id===r.id)}}).filter(o=>o.s.count||o.f.count||o.l);
-  if(!rows.length)return adEmpty("Nothing to watch","No outlet has qualifying reports right now.");
-  return `<div class="ad-surface ad-tbl"><table><thead><tr><th>Outlet</th><th>Standard (${RP.ESC.stdDays} days)</th><th>Fast lane (${RP.ESC.fastHours} h)</th><th>Status</th></tr></thead><tbody>${rows.map(o=>`<tr><td>${esc(o.r.name)}</td><td>${o.s.count} / ${RP.ESC.stdCount}</td><td>${o.f.count} / ${RP.ESC.fastCount}</td><td>${o.u?`<span class="ad-badge ad-b-more">Urgent</span>`:o.l?`<span class="ad-badge ad-b-ok">Escalated ${fmt(o.l.date)}</span>`:`<span class="ad-badge ad-b-pend">Watching</span>`}</td></tr>`).join("")}</tbody></table></div>`;
-}
-function adEscalationsHTML(urg){
-  const urgent=urg.map(({r,f})=>`<article class="ad-row ad-row-plain">
-    <div class="ad-row-body">
-      <div class="ad-row-top"><div class="ad-row-id"><h3 class="ad-fn">${esc(r.name)}</h3><div class="ad-meta"><span>FSSAI ${r.lic}</span><span>${f.count} reports in ${RP.ESC.fastHours} hours</span><span>${f.fresh} from numbers under ${RP.ESC.newDays} days old</span></div></div>
-        <div class="ad-badges"><span class="ad-badge ad-b-more">Urgent</span></div></div>
-      <p class="ad-refs">${f.list.map(x=>`${esc(x.ref)} · ${esc(x.cat)} · ${RP.isAccepted(x)?"accepted":"pending"}`).join("<br>")}</p>
-      <div class="ad-acts"><button class="ad-link" data-fast="coord" data-rid="${r.id}">Mark as coordinated</button><span class="ad-acts-main">${f.warn?`<span class="ad-badge ad-b-flag ad-warn">${ICO.warn}Possible coordinated reports</span>`:""}<button class="ad-btn ad-btn-pri" data-fast="confirm" data-rid="${r.id}">Confirm not coordinated</button></span></div>
-    </div></article>`).join("");
-  const sent=[...RP.ESCALATIONS].reverse().map(e=>{const r=place(e.rid);return `<article class="ad-row ad-row-plain">
-    <div class="ad-row-body">
-      <div class="ad-row-top"><div class="ad-row-id"><h3 class="ad-fn">${esc(r.name)}</h3><div class="ad-meta"><span>FSSAI ${r.lic}</span><span>To ${esc(e.authority)}</span><span>${fmt(e.date)}</span><span>${esc(e.ref)}</span></div></div>
-        <div class="ad-badges"><span class="ad-badge">${esc(e.rule)}</span><span class="ad-badge ad-b-ok">Sent</span></div></div>
-      <dl class="ad-facts"><div><dt>Reports</dt><dd>${e.reportIds.length}: ${e.reportIds.map(id=>esc(REPORTS.find(x=>x.id===id).ref)).join(", ")}</dd></div><div><dt>Rule</dt><dd>${esc(e.rule)}</dd></div><div><dt>Authority</dt><dd>${esc(e.authority)}</dd></div></dl>
-      <details class="ad-packet"><summary>Preview email packet <span class="ad-lbl-sub">Demo — not emailed.</span></summary><pre>${esc(RP.packetText(e))}</pre></details>
-      <div class="ad-acts"><span class="ad-td-muted">${e.actionOn?`Official action recorded ${fmt(e.actionOn)}. Reporters were told.`:"Waiting for an official action on the tracker."}</span>${e.actionOn?"":`<span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-sim="${e.id}">Demo: record an official action</button></span>`}</div>
-    </div></article>`}).join("");
-  return `<h3 class="ad-h3">Urgent · fast lane</h3><div class="ad-surface">${urgent||adEmpty("Nothing urgent",`No outlet has ${RP.ESC.fastCount} reports within ${RP.ESC.fastHours} hours.`)}</div>
-    <h3 class="ad-h3">Sent to the regulator</h3><div class="ad-surface">${sent||adEmpty("No escalations yet","Outlets are escalated automatically when a rule is met.")}</div>
-    <h3 class="ad-h3">Watching</h3>${adWatchHTML(urg)}`;
-}
-/* spot checks: demo controls, per-restaurant schedule, review queue */
-const SC_REJECT=["Code not visible or unreadable","Photo doesn't show the requested item","Photo looks older than the spot check","Photo too dark or blurred to judge"];
-const scBadge=c=>{const l=SCM.statusLabel(c),k=l.startsWith("Approved")||l==="Late · approved"?"ok":l==="Rejected"||l==="Missed"?"no":l==="Late"?"more":"pend";return `<span class="ad-badge ad-b-${k}">${l}</span>`};
-function adSpotRow(c){
-  const r=place(c.rid),pend=(c.status==="answered"||c.status==="late")&&!c.review,rej=S.adm.scRejecting===c.id;
-  return `<article class="ad-row ad-row-plain"><div class="ad-row-body">
-    <div class="ad-row-top"><div class="ad-row-id"><h3 class="ad-fn">${esc(r.name)}</h3><div class="ad-meta"><span class="sc-code">${c.code}</span><span>Sent ${SCM.fmtT(c.sent)}</span><span>Due ${SCM.fmtT(c.due)}</span>${c.answeredAt?`<span>Answered ${SCM.fmtT(c.answeredAt)}</span>`:""}</div></div>
-      <div class="ad-badges">${scBadge(c)}${c.flagCode?`<span class="ad-badge ad-b-flag">${ICO.flag}Code not visible</span>`:""}</div></div>
-    <dl class="ad-facts"><div><dt>Items</dt><dd>${c.items.map(i=>esc(SCM.show(i))+(REQ[i].crit?" (critical)":"")).join("<br>")}</dd></div><div><dt>Code</dt><dd>${c.code}</dd></div><div><dt>Photos</dt><dd>${c.photos.length} of ${c.items.length}</dd></div></dl>
-    ${c.photos.length?`<div class="ad-scphotos">${c.photos.map(ph=>`<figure class="ad-scph">${ph.url?`<img src="${ph.url}" alt="Spot-check photo: ${esc(SCM.show(ph.req))}">`:`<div class="ad-pv ad-pv-none">${ICO.img}<span>No preview</span></div>`}<figcaption><b>${esc(SCM.show(ph.req))}</b><span class="ad-lbl-sub" style="margin:0">AI-assisted observation · not a certification</span><ul class="ad-obs-list">${ph.ai.map(adObs).join("")}</ul></figcaption></figure>`).join("")}</div>`:""}
-    ${c.review==="rejected"?`<p class="ad-muted">Rejected: ${esc(c.reason)}</p>`:""}
-    ${rej?`<div class="ad-reason"><label class="ad-select"><span>Reason</span><select id="admScReason">${SC_REJECT.map(o=>`<option>${o}</option>`).join("")}</select></label><button class="ad-btn ad-btn-out" data-scm="cancel" data-scid="${c.id}">Cancel</button><button class="ad-btn ad-btn-danger ad-btn-danger-solid" data-scm="reject-go" data-scid="${c.id}">Reject spot check</button></div>`:""}
-    ${pend?`<div class="ad-acts"><button class="ad-link${c.flagCode?" is-on":""}" data-scm="flag" data-scid="${c.id}">${ICO.flag}Flag “code not visible”</button><span class="ad-acts-main"><button class="ad-btn ad-btn-danger" data-scm="reject" data-scid="${c.id}">Reject with reason</button><button class="ad-btn ad-btn-pri" data-scm="approve" data-scid="${c.id}">Approve</button></span></div>`:""}
-  </div></article>`;
-}
-function adSpotHTML(){
-  const rows=Object.keys(PROF).map(Number).map(rid=>{const open=SCM.openFor(rid),last=SCM.listFor(rid).filter(c=>c.status!=="due").pop();
-    return `<tr><td>${esc(place(rid).name)}</td><td class="ad-td-muted">${SCM.fmtT(SCM.NEXT[rid])}</td><td>${last?`${scBadge(last)} <span class="ad-td-muted">${fmt(new Date(last.sent).toISOString().slice(0,10))}</span>`:"—"}</td><td>${SCM.pausedBadge(rid)?`<span class="ad-badge ad-b-flag">Verification paused</span>`:`<span class="ad-badge">${LV[PROF[rid].level]}</span>`}</td><td><button class="ad-btn ad-btn-out" data-sc-send="${rid}" ${open?"disabled":""}>${open?"Spot check open":"Send spot check now"}</button></td></tr>`}).join("");
-  const checks=[...SCM.SC].sort((a,b)=>b.sent-a.sent).map(adSpotRow).join("");
-  return `<div class="ad-sechead"><p>One spot check per claimed restaurant each week, at a random time between 10:00 and 21:00, with 2 hours to answer. Demo clock: ${SCM.fmtT(RP.now())}.</p><button class="ad-btn ad-btn-out" data-sc-skip>Skip 2 hours (demo)</button></div>
-    <div class="ad-surface ad-tbl"><table><thead><tr><th>Restaurant</th><th>Next scheduled</th><th>Last result</th><th>Badge</th><th><span class="sr-only">Action</span></th></tr></thead><tbody>${rows}</tbody></table></div>
-    <h3 class="ad-h3">All spot checks</h3><div class="ad-surface">${checks||adEmpty("No spot checks yet","Send one from the table above.")}</div>`;
-}
-function renderAdmin(tab){
-  if(tab!==S.admTab){S.adm.sel=null;S.adm.box=null}
-  const allEv=adQueue();
-  const vr=Object.entries(PROF).filter(([,p])=>p.level==="pending");
-  RP.checkActions();
-  const pr=REPORTS.filter(x=>x.status==="pending"||(x.flag&&x.status!=="rejected"));
-  const urg=RP.urgentOutlets();
-  const tabs=[["verify","Verification requests",vr.length],["evidence","Evidence",allEv.length],["reports","Community reports",pr.length],["escalations","Escalations",urg.length],["scoring","Scoring rules",0],["expiry","Evidence expiry",0],["rules","Escalation rules",0],["spot","Spot checks",SCM.SC.filter(c=>(c.status==="answered"||c.status==="late")&&!c.review).length]];
-  document.getElementById("admSummary").innerHTML=[["Pending",allEv.length+vr.length],["Reports",pr.length],["Expiring soon",adExpiring()]].map(([l,n])=>`<div><dt>${l}</dt><dd>${n}</dd></div>`).join("");
-  document.getElementById("atabs").innerHTML=tabs.map(([k,l,n])=>`<button role="tab" data-atab="${k}" aria-selected="${k===tab}">${l}${n?`<span class="ad-count">${n}</span>`:""}</button>`).join("");
-  const nm=rid=>esc(place(rid).name);
-  const lc=rid=>`${nm(rid)} <b>${scoreOf(rid).overall}/100</b>${paused(rid)?` <span class="ad-td-muted">(paused publicly)</span>`:""}`;
-  const liveCheck=`<p class="ad-live"><span class="ad-lbl">Live check</span>${lc(3)}<span aria-hidden="true">·</span>${lc(13)}</p>`;
-  let h="";
-  if(tab==="verify")h=`<div class="ad-surface">${vr.map(([rid,p])=>{const sc=scoreOf(+rid),r=place(+rid);return `<article class="ad-row ad-row-plain">
-    <div class="ad-row-body">
-      <div class="ad-row-top">
-        <div class="ad-row-id"><h3 class="ad-fn">${nm(+rid)}</h3><div class="ad-meta"><span>${esc(r.area)}, ${esc(r.city)}</span><span>${esc(r.cat)}</span><span>Owner · +91 ${esc(p.owner)}</span>${p.reqOn?`<span>Requested ${ago(p.reqOn)}</span>`:""}</div></div>
-        <div class="ad-badges"><span class="ad-badge ad-b-pend">Verification requested</span></div>
-      </div>
-      <dl class="ad-stats"><div><dt>Score</dt><dd>${sc.overall}<small>/100</small></dd></div><div><dt>Requirements met</dt><dd>${sc.done}<small>/${sc.tot}</small></dd></div><div><dt>Evidence items</dt><dd>${evCounts(+rid).total}</dd></div><div><dt>Critical open</dt><dd class="${sc.crit.length?"is-bad":""}">${sc.crit.length}</dd></div></dl>
-      ${sc.crit.length?`<ul class="ad-obs-list">${sc.crit.map(q=>`<li class="ad-obs ad-obs-warn">${ICO.warn}<span>${esc(q.text)}</span></li>`).join("")}</ul>`:""}
-      <div class="ad-acts"><span></span><span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-v="more" data-rid="${rid}">Request more evidence</button><button class="ad-btn ad-btn-danger" data-v="reject" data-rid="${rid}">Reject</button><button class="ad-btn ad-btn-pri" data-v="approve" data-rid="${rid}">Approve</button></span></div>
-    </div></article>`}).join("")||adEmpty("No pending verification requests","Claim Bandra Bao Co. as an owner and tap “Request verification” to see one here.")}</div>`;
-  if(tab==="evidence"){const A=S.adm,n=adItems().length;
-    h=`<div class="ad-toolbar">
-      <label class="ad-search">${ICO.search}<input id="admQ" type="search" placeholder="Search evidence…" value="${esc(A.q)}" aria-label="Search evidence" autocomplete="off"></label>
-      <div class="ad-seg" role="group" aria-label="Filter">${[["all","All"],["pending","Pending"],["flagged","Flagged"],["recent","Recently submitted"]].map(([k,l])=>`<button data-af="${k}" aria-pressed="${A.filter===k}">${l}</button>`).join("")}</div>
-      <label class="ad-select"><span>Sort</span><select id="admSort">${[["new","Newest"],["old","Oldest"],["pri","Highest priority"]].map(([k,l])=>`<option value="${k}" ${A.sort===k?"selected":""}>${l}</option>`).join("")}</select></label>
-      <div class="ad-seg ad-seg-view" role="group" aria-label="View">${[["list","List"],["compact","Compact"]].map(([k,l])=>`<button data-av="${k}" aria-pressed="${A.view===k}">${l}</button>`).join("")}</div>
-    </div>
-    <div class="ad-listhead"><span id="admCount">${n} ${n===1?"item":"items"}</span><span>Select an item to open the review panel</span></div>
-    <div class="ad-surface ad-list${A.view==="compact"?" is-compact":""}" id="adList">${adListHTML()}</div>`}
-  if(tab==="reports")h=`<div class="ad-surface">${pr.map(adReportRow).join("")||adEmpty("No reports waiting","Every community report has been moderated.")}</div>`;
-  if(tab==="escalations")h=adEscalationsHTML(urg);
-  if(tab==="spot")h=adSpotHTML();
-  if(tab==="rules")h=`<div class="ad-sechead"><p>Per outlet, only accepted reports with a photo, video or bill, shared with consent, from different numbers count. Changes apply immediately.</p></div>
-    <div class="ad-surface ad-tbl"><table><thead><tr><th>Rule</th><th>Setting</th><th>Value</th></tr></thead><tbody>${RP.RULE_FIELDS.map(([g,fs])=>fs.map(([k,l,mn,mx,step],i)=>`<tr><td>${i?"":`<b>${g}</b>`}</td><td class="ad-td-muted">${l}</td><td><input type="number" min="${mn}" max="${mx}" step="${step}" value="${RP.ESC[k]}" data-esc="${k}" aria-label="${esc(g+": "+l)}"></td></tr>`).join("")).join("")}
-      <tr><td><b>Weights</b></td><td class="ad-td-muted" colspan="2">Established number 1.0 · New number as set above · Kept private or no photo, video or bill 0</td></tr></tbody></table></div>
-    <h3 class="ad-h3">Live status</h3>${adWatchHTML(urg)}`;
-  if(tab==="scoring")h=`<div class="ad-sechead"><p>Weights and critical flags apply to every restaurant instantly. Score = weighted met ÷ weighted applicable.</p>${liveCheck}</div>
-    <div class="ad-surface ad-tbl"><table><thead><tr><th>Requirement</th><th>Category</th><th>Weight</th><th>Critical</th></tr></thead><tbody>${REQS.map(q=>`<tr><td>${esc(q.text)}</td><td class="ad-td-muted">${CAT[q.cat].name}</td><td><input type="number" min="1" max="5" value="${q.w}" data-w="${q.id}" aria-label="Weight"></td><td><input type="checkbox" ${q.crit?"checked":""} data-c="${q.id}" aria-label="Critical"></td></tr>`).join("")}</tbody></table></div>`;
-  if(tab==="expiry")h=`<div class="ad-sechead"><p>How long evidence stays valid before it stops counting towards the score.</p>${liveCheck}</div>
-    <div class="ad-surface ad-tbl"><table><thead><tr><th>Category</th><th>Valid for (days)</th></tr></thead><tbody>${CATS.map(c=>`<tr><td>${c.name}</td><td><input type="number" min="1" max="730" value="${c.expiry}" data-x="${c.k}" aria-label="Days"></td></tr>`).join("")}</tbody></table></div>`;
-  document.getElementById("adm").innerHTML=`<div class="ad-pane" role="tabpanel">${h}</div><div id="admOverlay"></div>`;S.admTab=tab;
-  adOverlays();
-}
-function adOpen(id){S.adm.sel=id;S.adm.anim=true;renderAdmin("evidence");const b=document.getElementById("adPanelClose");if(b)b.focus()}
-function adClose(which){if(which==="box")S.adm.box=null;else S.adm.sel=null;adOverlays();if(which==="panel")document.querySelectorAll("#adList .ad-row.is-sel").forEach(x=>x.classList.remove("is-sel"))}
-document.getElementById("atabs").onclick=e=>{const b=e.target.closest("[data-atab]");if(b)renderAdmin(b.dataset.atab)};
-document.getElementById("adm").addEventListener("click",e=>{
-  const cl=e.target.closest("[data-close]");
-  if(cl){if(cl.dataset.close==="box"&&e.target.closest("figure"))return;adClose(cl.dataset.close);return}
-  const bx=e.target.closest("[data-box]");if(bx){S.adm.box=+bx.dataset.box;adOverlays();const b=document.getElementById("adBoxClose");if(b)b.focus();return}
-  const af=e.target.closest("[data-af]");if(af){S.adm.filter=af.dataset.af;renderAdmin("evidence");return}
-  const av=e.target.closest("[data-av]");if(av){S.adm.view=av.dataset.av;renderAdmin("evidence");return}
-  if(e.target.closest("[data-clear]")){S.adm.q="";S.adm.filter="all";renderAdmin("evidence");return}
-  const v=e.target.closest("[data-v]");
-  if(v){const p=PROF[+v.dataset.rid];const a=v.dataset.v;
-    if(a==="approve"){p.level="platform";p.verifiedOn=TODAY.toISOString().slice(0,10);p.adminNote="";Object.values(p.ev).flat().forEach(x=>{if(x.status==="submitted")x.status="verified"});toast("Approved. Now PlateWatch verified.")}
-    if(a==="more"){p.level="self";p.adminNote="Reviewer requested more evidence before verification. Check items marked 'More needed'.";toast("Sent back for more evidence")}
-    if(a==="reject"){p.level="self";p.adminNote="Verification request was not approved. Review your evidence and try again.";toast("Request rejected")}
-    renderAdmin("verify");return}
-  const ev=e.target.closest("[data-e]");
-  if(ev){const id=+ev.dataset.eid;const x=Object.values(PROF).flatMap(p=>Object.values(p.ev).flat()).find(y=>y.id===id);
-    /* with the panel open, a decision moves it on to the next item in the current list */
-    const before=S.adm.sel===id?adItems().map(y=>y.e.id):null;
-    if(ev.dataset.e==="flag")x.flag=!x.flag;else x.status=ev.dataset.e;toast("Evidence updated");
-    if(before&&ev.dataset.e!=="flag"){const after=new Set(adItems().map(y=>y.e.id));const i=before.indexOf(id);S.adm.sel=before.slice(i+1).concat(before.slice(0,i).reverse()).find(y=>after.has(y))??null}
-    renderAdmin("evidence");return}
-  const m=e.target.closest("[data-m]");
-  if(m){const x=REPORTS.find(y=>y.id===+m.dataset.rep),a=m.dataset.m;
-    if(a==="accept"){const made=RP.accept(x);toast(made.length?`Accepted · ${made.map(y=>place(y.rid).name).join(", ")} escalated to ${RP.AUTH}`:"Report accepted")}
-    if(a==="reject"){S.adm.rejecting=x.id;renderAdmin("reports");const sel=document.getElementById("admReason");if(sel)sel.focus();return}
-    if(a==="reject-go"){RP.reject(x,document.getElementById("admReason").value.toLowerCase());x.flag=false;toast("Report rejected")}
-    if(a==="more"){RP.askMore(x);toast("Asked the reporter for more")}
-    if(a==="coord"){RP.markCoordinated(x);toast("Marked as coordinated")}
-    if(a==="keep"){x.flag=false;toast("Kept published")}
-    S.adm.rejecting=null;renderAdmin("reports");return}
-  const fa=e.target.closest("[data-fast]");
-  if(fa){const rid=+fa.dataset.rid;if(fa.dataset.fast==="confirm"){RP.confirmFast(rid);toast(`Escalated to ${RP.AUTH}`)}else{const n=RP.coordinatedFast(rid);toast(`${n} reports marked as coordinated`)}renderAdmin("escalations");return}
-  const scs=e.target.closest("[data-sc-send]");if(scs){const c=SCM.send(+scs.dataset.scSend);toast(`Spot check ${c.code} sent to ${place(c.rid).name}`);renderAdmin("spot");return}
-  if(e.target.closest("[data-sc-skip]")){RP.advance(2*36e5+60e3);SCM.tick();toast("Demo clock moved forward 2 hours");renderAdmin("spot");return}
-  const scm=e.target.closest("[data-scm]");
-  if(scm){const id=+scm.dataset.scid,a=scm.dataset.scm;
-    if(a==="reject"){S.adm.scRejecting=id;renderAdmin("spot");const sel=document.getElementById("admScReason");if(sel)sel.focus();return}
-    if(a==="reject-go"){SCM.review(id,"reject",document.getElementById("admScReason").value.toLowerCase());toast("Spot check rejected")}
-    if(a==="approve"){SCM.review(id,"approve");toast("Approved · photos added to the kitchen gallery")}
-    if(a==="flag"){SCM.review(id,"flag");toast("Flagged: code not visible")}
-    S.adm.scRejecting=null;renderAdmin("spot");return}
-  const sm=e.target.closest("[data-sim]");if(sm){RP.simulateAction(+sm.dataset.sim);toast("Official action recorded (demo)");renderAdmin("escalations");return}
-  const op=e.target.closest("[data-open]");if(op){adOpen(+op.dataset.open);return}
-  const row=e.target.closest(".ad-row[data-row]");
-  if(row&&!e.target.closest("button,a,input,select,textarea,label")&&!getSelection().toString())adOpen(+row.dataset.row);
-});
-document.getElementById("adm").addEventListener("input",e=>{
-  if(e.target.id==="admQ"){S.adm.q=e.target.value;adDrawList();return}
-  const n=e.target.dataset.rnote;if(n){const it=adFind(+n);if(it)it.e.reviewNote=e.target.value}
-});
-document.getElementById("adm").addEventListener("change",e=>{
-  if(e.target.id==="admSort"){S.adm.sort=e.target.value;adDrawList();return}
-  const ek=e.target.dataset.esc;
-  if(ek){const i=e.target;RP.ESC[ek]=Math.max(+i.min,Math.min(+i.max,+i.value||+i.min));const made=RP.evaluate();if(made.length)toast(`${made.map(y=>place(y.rid).name).join(", ")} escalated to ${RP.AUTH}`);renderAdmin("rules");return}
-  const w=e.target.dataset.w,c=e.target.dataset.c,x=e.target.dataset.x;
-  if(w){REQ[w].w=Math.max(1,Math.min(5,+e.target.value||1));renderAdmin("scoring")}
-  if(c){REQ[c].crit=e.target.checked;renderAdmin("scoring")}
-  if(x){CAT[x].expiry=Math.max(1,+e.target.value||1);renderAdmin("expiry")}
-});
-document.addEventListener("keydown",e=>{
-  if(e.key!=="Escape"||document.getElementById("p-admin").hidden)return;
-  if(S.adm.box!=null)adClose("box");else if(S.adm.sel!=null)adClose("panel");
-});
+/* ---------- ADMIN (staff only; everything comes from the API) ---------- */
+const ADM=createAdmin({api,esc,fmt,toast,go});
 
 /* ================= V5 HOME ================= */
+/* illustrations show fictional samples: open the real profile if the restaurant exists, otherwise the tracker */
+function openSample(id){api("GET","/restaurants/"+id).then(()=>go("detail",id),()=>go("tracker"))}
 function heroCards(){
   const pick=[[1,"Food safety violations","c1"],[3,"Compliance confirmed","c2"]];
   const lab={sus:"Licence suspended",ok:"Cleared · reinstated",imp:"Improvement notice",rev:"Licence revoked"};
   const w=document.getElementById("hcWrap");
-  w.innerHTML=pick.map(([id,line,cls])=>{const r=D.find(x=>x.id===id),c=cur(r);const ini=r.name.split(/\s+/).map(x=>x[0]).join("").slice(0,2);
+  w.innerHTML=pick.map(([id,line,cls])=>{const r=SAMPLE.find(x=>x.id===id),c=cur(r);const ini=r.name.split(/\s+/).map(x=>x[0]).join("").slice(0,2);
     return `<button class="hc5 ${cls}" data-id="${r.id}" aria-label="${esc(r.name)}, ${lab[c[1]]}, ${fmt(c[0])}. Sample record. Open profile"><span class="mn" aria-hidden="true">${ini}</span><span><span class="nm">${esc(r.name)}</span><span class="ar">${esc(r.area)}, ${esc(r.city)}</span><span class="st ${TYPES[c[1]][1]}">${lab[c[1]]}</span></span><span class="ft"><span>${line}</span><b>${fmt(c[0])}</b></span></button>`}).join("");
-  w.onclick=e=>{const b=e.target.closest(".hc5");if(b)go("detail",+b.dataset.id)};
+  w.onclick=e=>{const b=e.target.closest(".hc5");if(b)openSample(+b.dataset.id)};
 }
 function initHero(){
   const nav=document.querySelector(".nav"),photo=document.getElementById("plate"),g=document.getElementById("plG"),line=document.getElementById("plLine");
@@ -1121,7 +929,7 @@ function initHero(){
   addEventListener("scroll",req,{passive:true});addEventListener("resize",req);apply();
 }
 function renderHomeExtras(){
-  const id=3,r=D.find(x=>x.id===id),c=cur(r),p=PROF[id],sc=scoreOf(id),ec=evCounts(id);
+  const id=DEMO,r=SAMPLE_GREEN,c=cur(r),p=PROF[id],sc=scoreOf(id),ec=evCounts(id);
   /* restaurant dashboard preview */
   document.getElementById("ckPrev").innerHTML=`<div class="p5-top"><div><div class="p5-k">Restaurant dashboard · sample</div><div class="p5-n">${esc(r.name)}</div></div>${lvlFor(id)}</div>
    <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score">${pubScore(id,sc.overall)}</div>
@@ -1132,19 +940,19 @@ function renderHomeExtras(){
   document.getElementById("pmCard").innerHTML=`<div class="p5-top"><div><div class="p5-k">Food Safety Profile · sample</div><div class="p5-n">${esc(r.name)}</div><div class="muted" style="font-size:13px">${esc(r.area)}, ${esc(r.city)}</div></div>${lvlFor(id)}</div>
    <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score">${pubScore(id,sc.overall)}<dl class="scoremeta"><dt>Evidence</dt><dd>${ec.total} pieces</dd><dt>Last updated</dt><dd>${ec.last?ago(ec.last):"—"}</dd></dl></div>${barsHTML(sc)}</div>
    <div class="p5-sec" style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center"><span class="tag tag-off">Official status</span>${st(c[1])}</div>`;
-  document.getElementById("pmOpen").onclick=()=>go("detail",id);
+  document.getElementById("pmOpen").onclick=()=>openSample(SAMPLE_GREEN.id);
   /* journey */
   const pts=[...p.journey.map(j=>({m:j.m,s:j.score,k:j.kind,n:j.notes})),{m:"Sep 2026 · now",s:paused(id)?null:sc.overall,k:paused(id)?"Compliance score paused while an official action is open":"Current",n:sc.missing.length?[sc.missing.length+" requirement"+(sc.missing.length>1?"s":"")+" open"]:["All requirements met"],now:true}];
   document.getElementById("jrChart").innerHTML=`<div class="tl5">${pts.map(q=>`<div class="tl5-i ${q.now?"now":""}"><span class="tl5-m">${esc(q.m)}</span><span class="tl5-dot"></span><b>${q.s==null?"—":q.s+"<small>/100</small>"}</b><span class="k2">${esc(q.k)}</span><ul>${q.n.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`).join("")}</div><p class="tl5-note">Sample: ${esc(r.name)}'s evidence over three months. Scores are recalculated as evidence is added or expires.</p>`;
   /* community */
-  const x=REPORTS.find(y=>y.id===1);
+  const x=SAMPLE_REPORT;
   document.getElementById("cmExample").innerHTML=`<div class="p5-top"><div><div class="p5-k">Community report · sample</div><div class="p5-n">${esc(r.name)}</div></div>${rsPill(x.status)}</div>
    <div class="rep"><div class="top"><span class="tag tag-com">Reported ${fmt(x.date)}</span>${x.photo?"<span>Photo attached</span>":""}</div><p style="font-size:17px">${esc(x.text)}</p>
    <div class="resp"><span class="tag tag-self">Restaurant response · ${fmt(x.response.date)}</span><div>${esc(x.response.text)}</div><div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${esc(x.response.ev)}</div></div></div>`;
   document.getElementById("finalSearch").onsubmit=e=>{e.preventDefault();S.q=document.getElementById("finalQ").value;document.getElementById("q").value=S.q;S.pendingSearch=S.q;go("tracker")};
   document.getElementById("navSearch").onclick=()=>{go("tracker");setTimeout(()=>document.getElementById("q").focus(),50)};
 }
-heroCards();initHero();renderHomeExtras();
+heroCards();initHero();renderHomeExtras();loadHome();
 /* ================= V6: About + How it works ================= */
 (function(){
   /* smooth scroll to demo */
@@ -1254,7 +1062,7 @@ heroCards();initHero();renderHomeExtras();
   /* ---------- restaurant mini dashboard ---------- */
   const NOTES=["Owners confirm ownership with their FSSAI licence number and a one-time code to the owner's phone.","27 requirements across 7 categories, based on public FSSAI hygiene parameters.","Photos, videos and PDFs, each dated. Evidence expires, so the profile stays live.","Owners are notified of every report and can reply publicly with evidence.","Our team reviews the evidence. Approved profiles show PlateWatch verified."];
   function rsDash(active){
-    const id=3,r=D.find(x=>x.id===id),p=PROF[id],sc=scoreOf(id),ec=evCounts(id),nrep=REPORTS.filter(x=>x.rid===id&&RP.visibleToRestaurant(x)).length;
+    const id=DEMO,r=SAMPLE_GREEN,p=PROF[id],sc=scoreOf(id),ec=evCounts(id),nrep=1;
     document.getElementById("rsDash").innerHTML=`
       <div class="p5-top" data-hl="0"><div><div class="p5-k">Restaurant dashboard · sample</div><div class="p5-n">${esc(r.name)}</div><div class="muted" style="font-size:13px">Claimed by owner · ${esc(r.area)}, ${esc(r.city)}</div></div><span data-hl="4">${lvlFor(id)}</span></div>
       <div class="p5-sec"><div class="p5-k">Food Safety Compliance</div><div class="p5-score">${pubScore(id,sc.overall)}</div>
@@ -1271,6 +1079,16 @@ heroCards();initHero();renderHomeExtras();
 
 renderSeg();syncAuthBtn();
 {const t=parseHash(location.hash);if(t)go(t.p,t.arg,{fromHash:true});else history.replaceState(null,"","#home")}
+/* still signed in from an earlier visit? then finish what the first render couldn't (#account waits on this) */
+api("GET","/me",undefined,{timeout:5000}).then(async({user})=>{
+  if(!user||S.user)return;
+  await signedIn(user);
+  const p=S.page.p;
+  if(p==="login"&&(S.after==="account"||S.after==="admin")){const nx=S.after;S.after=null;go(nx)}
+  else if(p==="biz"&&S.owner!=null&&location.hash==="#restaurants")go("dash","overview");
+  else if(p==="account")renderAccount();
+  else if(p==="detail")renderDetail(S.page.arg);
+}).catch(()=>{/* API unreachable: browsing works signed out */});
 /* spot-check deadlines and countdowns run on the shared demo clock */
 setInterval(()=>{SCM.tick();document.querySelectorAll("[data-countdown]").forEach(el=>{el.textContent=SCM.left(+el.dataset.countdown)})},1000);
 }
