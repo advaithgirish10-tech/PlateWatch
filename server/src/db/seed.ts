@@ -33,6 +33,7 @@ export async function seedSampleRestaurants(db: DB) {
           location: r.location ? { x: r.location.lng, y: r.location.lat } : null,
           lastVerifiedOn: r.lastVerifiedOn,
           isSample: true,
+          source: "sample",
         })
         .onConflictDoNothing()
         .returning({ id: restaurants.id });

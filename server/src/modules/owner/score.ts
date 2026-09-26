@@ -53,18 +53,32 @@ export function score({ cats, reqs, answers, evidence, today }: Checkup) {
 
 export const grade = (s: number) => (s >= 90 ? "Strong" : s >= 75 ? "Good" : s >= 60 ? "Needs work" : "Incomplete");
 
-/* per category: fresh (under half its validity used), aging, expired items, or no evidence */
+/*
+ * Per category: fresh (under half its validity used), aging, expired items, or no evidence.
+ * dueOn is the day new evidence is due by: the last day the oldest item's newest evidence still counts.
+ * After it, that category is overdue and its late items no longer count towards the score.
+ */
 export function freshness({ cats, reqs, answers, evidence, today }: Checkup) {
   return [...cats.values()].map((c) => {
     const inCat = reqs.filter((r) => r.categoryKey === c.key);
     const live = evidence.filter((e) => e.status !== "rejected" && inCat.some((r) => r.id === e.requirementId));
-    if (!live.length) return { key: c.key, name: c.name, state: "none" as const, lastUpdated: null };
+    const base = { key: c.key, name: c.name, everyDays: c.expiryDays };
+    if (!live.length) return { ...base, state: "none" as const, lastUpdated: null, dueOn: null };
     const lastUpdated = live.map((e) => e.capturedOn).sort().at(-1)!;
+    const dues = inCat
+      .filter((r) => answers.get(r.id) === "yes")
+      .map((r) => live.filter((e) => e.requirementId === r.id).map((e) => e.capturedOn).sort().at(-1))
+      .filter((d): d is string => !!d)
+      .map((d) => addDays(d, c.expiryDays));
+    const dueOn = dues.sort()[0] ?? null;
     const expired = inCat.filter((r) => answers.get(r.id) === "yes" && live.some((e) => e.requirementId === r.id) && !live.some((e) => e.requirementId === r.id && current(e, c, today))).length;
-    if (expired) return { key: c.key, name: c.name, state: "expired" as const, lastUpdated, expiredItems: expired };
-    return { key: c.key, name: c.name, state: daysBetween(lastUpdated, today) <= c.expiryDays / 2 ? ("fresh" as const) : ("aging" as const), lastUpdated };
+    if (expired) return { ...base, state: "expired" as const, lastUpdated, dueOn, expiredItems: expired };
+    return { ...base, state: daysBetween(lastUpdated, today) <= c.expiryDays / 2 ? ("fresh" as const) : ("aging" as const), lastUpdated, dueOn };
   });
 }
+
+/* "2026-09-26" + n days, as a date string */
+const addDays = (iso: string, n: number) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86_400_000).toISOString().slice(0, 10);
 
 export type BadgeLevel = "none" | "claimed" | "verified";
 

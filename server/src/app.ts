@@ -1,7 +1,7 @@
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyServerOptions } from "fastify";
-import { SESSION_COOKIE, sessionUser } from "./auth/sessions.js";
+import { cookieFor, modeOf, sessionUser } from "./auth/sessions.js";
 import { authRoutes } from "./auth/routes.js";
 import { HttpError, forbidden } from "./lib/errors.js";
 import { adminRoutes } from "./modules/admin/routes.js";
@@ -36,8 +36,9 @@ export async function buildApp(deps: Deps, { rateLimit: limit = true, ...opts }:
   });
 
   app.addHook("onRequest", async (req) => {
-    const token = req.cookies[SESSION_COOKIE];
-    if (token) req.user = await sessionUser(deps.db, token, deps.now());
+    const mode = modeOf(req);
+    const token = req.cookies[cookieFor(mode)];
+    if (token) req.user = await sessionUser(deps.db, token, deps.now(), mode);
   });
 
   app.setErrorHandler((err, req, reply) => {

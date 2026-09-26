@@ -1,23 +1,26 @@
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { requireUser } from "../../auth/sessions.js";
-import { evidence, reportEvidence, reports, responses, restaurantOwners, restaurantResponses, restaurants } from "../../db/schema.js";
+import { requireOwnerLogin } from "../../auth/sessions.js";
+import { evidence, reportEvidence, reports, responses, restaurantOwners, restaurantResponses, restaurants, uploads } from "../../db/schema.js";
 import { audit } from "../../lib/audit.js";
 import { daysBetween, isoDateIST } from "../../lib/dates.js";
 import { badRequest, conflict, forbidden, notFound } from "../../lib/errors.js";
 import { cleanText, idParam, parse } from "../../lib/validate.js";
-import { reportRef } from "../reports/dto.js";
+import { publicUntil, reportRef } from "../reports/dto.js";
 import { isOpenAction } from "../restaurants/service.js";
 import { consumeUpload } from "../uploads/service.js";
 import { loadCheckups } from "./checkup-data.js";
 import { badge, freshness, grade, score } from "./score.js";
 
+const PDF_ONLY = new Set(["pest", "docs"]);
 const Claim = z.object({ restaurantId: z.number().int().positive(), licenceNumber: z.string().max(20) });
 const AnswerBody = z.object({ answer: z.enum(["yes", "no", "na"]) });
 const EvidenceBody = z.object({ requirementId: z.string().max(10), uploadId: z.uuid(), note: cleanText(500).optional() });
-const ResponseBody = z.object({ text: cleanText(1000).pipe(z.string().min(5)), uploadId: z.uuid().optional() });
+/* "action taken": what the restaurant did, with proof (a live photo or a PDF) */
+const ResponseBody = z.object({ text: cleanText(1000).pipe(z.string().min(5, "Say what you did, in a few words.")), uploadId: z.uuid({ message: "Add proof: a photo or a PDF." }) });
 const ReqParams = z.object({ id: z.coerce.number().int().positive(), reqId: z.string().max(10) });
+const EvidenceParams = z.object({ id: z.coerce.number().int().positive(), evidenceId: z.uuid() });
 const ReportParams = z.object({ id: z.coerce.number().int().positive(), reportId: z.coerce.number().int().positive() });
 
 export async function ownerRoutes(app: FastifyInstance) {
@@ -27,7 +30,7 @@ export async function ownerRoutes(app: FastifyInstance) {
 
   /* the owner of this restaurant, or an admin */
   async function ownerOf(req: FastifyRequest, restaurantId: number) {
-    const me = requireUser(req);
+    const me = requireOwnerLogin(req);
     const [o] = await db.select().from(restaurantOwners).where(eq(restaurantOwners.restaurantId, restaurantId)).limit(1);
     if (!o) throw notFound("This restaurant hasn't been claimed.");
     if (o.userId !== me.id && me.role !== "admin") throw forbidden("You don't manage this restaurant.");
@@ -36,11 +39,19 @@ export async function ownerRoutes(app: FastifyInstance) {
 
   /* claim with the licence number; the signed-in, OTP-verified number becomes the owner's */
   app.post("/api/owner/claims", { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } }, async (req, reply) => {
-    const me = requireUser(req);
+    const me = requireOwnerLogin(req);
     const body = parse(Claim, req.body);
     const [r] = await db.select().from(restaurants).where(eq(restaurants.id, body.restaurantId)).limit(1);
     if (!r) throw notFound("No restaurant with that ID.");
-    if (body.licenceNumber.replace(/\D/g, "") !== r.licenceNumber) throw badRequest("That licence number doesn't match our records for this restaurant.", { fields: { licenceNumber: "mismatch" } });
+    const lic = body.licenceNumber.replace(/\D/g, "");
+    if (r.licenceNumber) {
+      if (lic !== r.licenceNumber) throw badRequest("That licence number doesn't match our records for this restaurant.", { fields: { licenceNumber: "mismatch" } });
+    } else {
+      /* no licence on record yet (imported from OpenStreetMap): the owner's number is saved, and staff check it on FoSCoS */
+      if (!/^\d{14}$/.test(lic)) throw badRequest("FSSAI licence and registration numbers are 14 digits.", { fields: { licenceNumber: "invalid" } });
+      const [taken] = await db.select({ id: restaurants.id }).from(restaurants).where(eq(restaurants.licenceNumber, lic)).limit(1);
+      if (taken) throw conflict("LICENCE_IN_USE", "That licence number belongs to another restaurant on PlateWatch. Contact support if it's yours.");
+    }
     const [existing] = await db.select().from(restaurantOwners).where(eq(restaurantOwners.restaurantId, r.id)).limit(1);
     if (existing) {
       if (existing.userId === me.id) return reply.status(200).send({ restaurantId: r.id, level: existing.level, existing: true });
@@ -48,13 +59,14 @@ export async function ownerRoutes(app: FastifyInstance) {
     }
     await db.transaction(async (tx) => {
       await tx.insert(restaurantOwners).values({ restaurantId: r.id, userId: me.id, level: "self" });
+      if (!r.licenceNumber) await tx.update(restaurants).set({ licenceNumber: lic, licenceStatus: null, licenceCheckedOn: null, updatedAt: deps.now() }).where(eq(restaurants.id, r.id));
       await audit(tx, { actorId: me.id, action: "owner.claim", entityType: "restaurant", entityId: r.id });
     });
     return reply.status(201).send({ restaurantId: r.id, level: "self", existing: false });
   });
 
   app.get("/api/owner/restaurants", async (req) => {
-    const me = requireUser(req);
+    const me = requireOwnerLogin(req);
     const rows = await db
       .select({ r: restaurants, o: restaurantOwners })
       .from(restaurantOwners)
@@ -87,6 +99,8 @@ export async function ownerRoutes(app: FastifyInstance) {
         name: e.originalName,
         capturedOn: e.capturedOn,
         status: e.status,
+        /* new uploads are reviewed within 24 hours */
+        reviewBy: e.status === "submitted" ? new Date(e.createdAt.getTime() + 86_400_000).toISOString() : null,
         /* past its category's validity: no longer counts, whatever its review status */
         expired: e.status !== "rejected" && daysBetween(e.capturedOn, d) > ck.checkup.cats.get(ck.checkup.reqs.find((q) => q.id === e.requirementId)!.categoryKey)!.expiryDays,
         note: e.note,
@@ -145,7 +159,14 @@ export async function ownerRoutes(app: FastifyInstance) {
     const { me } = await ownerOf(req, id);
     const body = parse(EvidenceBody, req.body);
     const { reqs } = (await loadCheckups(db, [id], today())).get(id)!.checkup;
-    if (!reqs.some((q) => q.id === body.requirementId)) throw notFound("No such requirement.");
+    const q = reqs.find((x) => x.id === body.requirementId);
+    if (!q) throw notFound("No such requirement.");
+    /* pest control and documentation take documents (PDF); every other requirement takes a photo of the kitchen */
+    const [u] = await db.select({ type: uploads.contentType }).from(uploads).where(and(eq(uploads.id, body.uploadId), eq(uploads.userId, me.id))).limit(1);
+    if (!u) throw conflict("UPLOAD_UNAVAILABLE", "That upload can't be used. Upload the file again.");
+    if (PDF_ONLY.has(q.categoryKey) ? u.type !== "application/pdf" : !u.type.startsWith("image/")) {
+      throw badRequest(PDF_ONLY.has(q.categoryKey) ? "Pest control and documentation need a PDF: the contract, certificate or record." : "This question needs a photo of your kitchen, taken with the camera.", { code: "WRONG_EVIDENCE_TYPE" });
+    }
     const f = await consumeUpload(deps, { uploadId: body.uploadId, userId: me.id, purpose: "evidence" });
     const row = await db.transaction(async (tx) => {
       const [ev] = await tx
@@ -161,6 +182,7 @@ export async function ownerRoutes(app: FastifyInstance) {
           capturedOn: today(),
           note: body.note || null,
           submittedBy: me.id,
+          createdAt: deps.now(),
         })
         .returning();
       /* uploading evidence for an unanswered requirement answers it "yes" */
@@ -169,6 +191,20 @@ export async function ownerRoutes(app: FastifyInstance) {
       return ev!;
     });
     return reply.status(201).send({ id: row.id, status: row.status });
+  });
+
+  /* uploaded the wrong file: remove it. It leaves the review queue and the gallery, and stops counting towards the score */
+  app.delete("/api/owner/restaurants/:id/evidence/:evidenceId", async (req, reply) => {
+    const { id, evidenceId } = parse(EvidenceParams, req.params);
+    const { me } = await ownerOf(req, id);
+    const [ev] = await db.select().from(evidence).where(and(eq(evidence.id, evidenceId), eq(evidence.restaurantId, id))).limit(1);
+    if (!ev) throw notFound("That file isn't on this checkup.");
+    await db.transaction(async (tx) => {
+      await tx.delete(evidence).where(eq(evidence.id, ev.id));
+      await audit(tx, { actorId: me.id, action: "evidence.remove", entityType: "evidence", entityId: ev.id, data: { restaurantId: id, requirementId: ev.requirementId, kind: ev.kind, status: ev.status } });
+    });
+    await deps.storage.delete(ev.storageKey).catch((err) => req.log.warn({ err, key: ev.storageKey }, "couldn't delete a removed evidence file"));
+    return reply.status(204).send();
   });
 
   app.post("/api/owner/restaurants/:id/verification-request", async (req, reply) => {
@@ -194,20 +230,39 @@ export async function ownerRoutes(app: FastifyInstance) {
       .leftJoin(restaurantResponses, eq(restaurantResponses.reportId, reports.id))
       .where(and(eq(reports.restaurantId, id), eq(reports.status, "accepted"), eq(reports.share, true)))
       .orderBy(desc(reports.createdAt));
-    const kinds = rows.length
-      ? await db.select({ reportId: reportEvidence.reportId, kind: reportEvidence.kind }).from(reportEvidence).where(and(inArray(reportEvidence.reportId, rows.map((x) => x.rep.id)), ne(reportEvidence.kind, "note")))
+    const files = rows.length
+      ? await db.select().from(reportEvidence).where(and(inArray(reportEvidence.reportId, rows.map((x) => x.rep.id)), ne(reportEvidence.kind, "note")))
       : [];
+    /* the restaurant sees the food photos; the bill stays with PlateWatch (it can carry the diner's name or card digits) */
+    const photoUrls = new Map(await Promise.all(files.filter((f) => f.kind === "photo").map(async (f) => [f.id, await deps.storage.signedGetUrl(f.storageKey, 3600)] as const)));
+    const now = deps.now();
     return {
-      items: rows.map(({ rep, resp }) => ({
-        id: rep.id,
-        ref: reportRef(rep.id),
-        date: isoDateIST(rep.createdAt),
-        category: rep.category,
-        text: rep.text,
-        evidence: kinds.filter((k) => k.reportId === rep.id).map((k) => k.kind),
-        flagged: rep.flaggedByOwner,
-        response: resp ? { text: resp.text, date: isoDateIST(resp.createdAt), hasEvidence: !!resp.storageKey } : null,
-      })),
+      items: await Promise.all(
+        rows.map(async ({ rep, resp }) => ({
+          id: rep.id,
+          ref: reportRef(rep.id),
+          date: isoDateIST(rep.createdAt),
+          createdAt: rep.createdAt.toISOString(),
+          category: rep.category,
+          text: rep.text,
+          evidence: files.filter((k) => k.reportId === rep.id).map((k) => k.kind),
+          photos: files.filter((f) => f.reportId === rep.id && f.kind === "photo").map((f) => photoUrls.get(f.id)!),
+          /* shown on the public profile for 2 weeks from when it was made */
+          publicUntil: publicUntil(rep.createdAt).toISOString(),
+          public: publicUntil(rep.createdAt) > now,
+          flagged: rep.flaggedByOwner,
+          response: resp
+            ? {
+                text: resp.text,
+                date: isoDateIST(resp.createdAt),
+                status: resp.status,
+                reviewNote: resp.reviewNote,
+                reviewBy: resp.status === "pending" ? new Date(resp.createdAt.getTime() + 86_400_000).toISOString() : null,
+                proof: resp.storageKey ? { kind: resp.proofKind, name: resp.originalName, url: await deps.storage.signedGetUrl(resp.storageKey, 3600) } : null,
+              }
+            : null,
+        })),
+      ),
     };
   });
 
@@ -226,14 +281,21 @@ export async function ownerRoutes(app: FastifyInstance) {
     const { me } = await ownerOf(req, id);
     const body = parse(ResponseBody, req.body);
     await visibleReport(id, reportId);
-    const [already] = await db.select({ id: restaurantResponses.reportId }).from(restaurantResponses).where(eq(restaurantResponses.reportId, reportId)).limit(1);
-    if (already) throw conflict("ALREADY_RESPONDED", "You've already responded to this report.");
-    const f = body.uploadId ? await consumeUpload(deps, { uploadId: body.uploadId, userId: me.id, purpose: "response" }) : null;
+    /* one resolution per report; after PlateWatch turns one down, the owner can send new proof */
+    const [already] = await db.select().from(restaurantResponses).where(eq(restaurantResponses.reportId, reportId)).limit(1);
+    if (already && already.status !== "rejected")
+      throw conflict("ALREADY_RESPONDED", already.status === "pending" ? "Your proof is waiting for PlateWatch to check it." : "This report is already marked as resolved.");
+    const [u] = await db.select({ type: uploads.contentType }).from(uploads).where(and(eq(uploads.id, body.uploadId), eq(uploads.userId, me.id))).limit(1);
+    if (!u) throw conflict("UPLOAD_UNAVAILABLE", "That upload can't be used. Upload the file again.");
+    if (!u.type.startsWith("image/") && u.type !== "application/pdf") throw badRequest("Proof must be a photo or a PDF.", { code: "WRONG_EVIDENCE_TYPE" });
+    const f = await consumeUpload(deps, { uploadId: body.uploadId, userId: me.id, purpose: "response" });
+    const row = { text: body.text, storageKey: f.storageKey, originalName: f.originalName, proofKind: f.kind === "document" ? ("document" as const) : ("photo" as const), status: "pending" as const, reviewNote: null, reviewedBy: null, reviewedAt: null, respondedBy: me.id, createdAt: deps.now() };
     await db.transaction(async (tx) => {
-      await tx.insert(restaurantResponses).values({ reportId, text: body.text, storageKey: f?.storageKey ?? null, originalName: f?.originalName ?? null, respondedBy: me.id });
-      await audit(tx, { actorId: me.id, action: "report.respond", entityType: "report", entityId: reportId });
+      await tx.insert(restaurantResponses).values({ reportId, ...row }).onConflictDoUpdate({ target: restaurantResponses.reportId, set: row });
+      await audit(tx, { actorId: me.id, action: "report.respond", entityType: "report", entityId: reportId, data: { proof: row.proofKind, again: !!already } });
     });
-    return reply.status(201).send({ ok: true });
+    if (already?.storageKey) await deps.storage.delete(already.storageKey).catch(() => {});
+    return reply.status(201).send({ ok: true, status: "pending" });
   });
 
   app.post("/api/owner/restaurants/:id/reports/:reportId/flag", async (req, reply) => {

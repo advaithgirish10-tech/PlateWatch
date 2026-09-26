@@ -23,7 +23,7 @@ const advance=ms=>{skew+=ms};
 const place=rid=>known(rid)||{id:rid,name:"This place",area:"",city:"",cat:"",lic:""};
 
 /* ---------- rules (editable in Admin → Escalation rules) ---------- */
-const ESC={stdCount:4,stdDays:7,fastCount:5,fastHours:48,newDays:7,newWeight:0.5,illNoteHours:72,illSecondDays:14,cooldownDays:60,perOutletDays:7,dailyLimit:5};
+const ESC={stdCount:4,stdDays:7,fastCount:5,fastHours:48,newDays:7,newWeight:0.5,illNoteHours:72,illSecondDays:14,cooldownDays:60,perOutletDays:7,dailyLimit:1,weeklyLimit:5};
 const RULE_FIELDS=[
   ["Standard rule",[["stdCount","Weighted reports needed",1,50,0.5],["stdDays","Within (days)",1,60,1]]],
   ["Fast lane",[["fastCount","Reports needed",2,50,1],["fastHours","Within (hours)",1,168,1]]],
@@ -252,7 +252,10 @@ async function afterVerify(){
   let mine=[];
   try{mine=(await api("GET","/me/reports")).items}catch(_){/* the server checks the limits again when the report is sent */}
   const today=new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"});
-  if(mine.filter(x=>x.date===today).length>=ESC.dailyLimit){say("You've reached today's limit. Try again tomorrow.");end();return}
+  /* the server has the exact rolling-week rule; this is the early warning */
+  const weekAgo=new Date(Date.now()-7*DAY).toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"});
+  if(mine.filter(x=>x.date>weekAgo).length>=ESC.weeklyLimit){say(`You've sent ${ESC.weeklyLimit} reports this week. You can send another in a few days.`);end();return}
+  if(mine.filter(x=>x.date===today).length>=ESC.dailyLimit){say(ESC.dailyLimit===1?"You can send one report a day. Try again tomorrow.":"You've reached today's limit. Try again tomorrow.");end();return}
   const more=mine.filter(x=>x.askMore&&x.stage===0);
   if(more.length&&!C.rid&&!C.place){
     say("A moderator asked for more on one of your reports.");
@@ -264,6 +267,8 @@ async function afterVerify(){
 }
 /* 1 report per number per outlet per week */
 function guardOutlet(){
+  /* owners can't report their own restaurant (the API refuses it too) */
+  if(C.rid&&S.user&&(S.user.owned||[]).includes(C.rid)){say("You can't report a restaurant you manage.");end();return false}
   const p=phoneNow(),from=now()-ESC.perOutletDays*DAY;
   const same=x=>C.rid?x.rid===C.rid:!x.rid&&x.place&&C.place&&x.place.name.toLowerCase()===C.place.name.toLowerCase();
   const prev=REPORTS.find(x=>x.user===p&&same(x)&&x.ts>=from);

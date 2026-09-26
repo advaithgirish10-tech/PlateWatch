@@ -1,4 +1,4 @@
-import { and, asc, count, countDistinct, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, countDistinct, desc, eq, gte, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -17,8 +17,11 @@ import { notFound } from "../../lib/errors.js";
 import { cleanText, idParam, parse } from "../../lib/validate.js";
 import { badgesFor, loadCheckups } from "../owner/checkup-data.js";
 import { freshness, grade, score } from "../owner/score.js";
-import { reportRef } from "../reports/dto.js";
+import { PUBLIC_REPORT_DAYS, publicUntil, reportRef } from "../reports/dto.js";
 import { dotOf, isOpenAction, likeEscape, summaryLine, type ActionType } from "./service.js";
+
+/* how long an approved kitchen photo stays in the public gallery */
+const GALLERY_DAYS = 30;
 
 const ListQuery = z.object({
   bbox: z
@@ -29,6 +32,7 @@ const ListQuery = z.object({
   city: z.string().max(60).optional(),
   status: z.enum(["red", "amber", "green", "grey"]).optional(),
   badge: z.enum(["verified", "claimed", "none"]).optional(),
+  licence: z.enum(["active", "inactive", "unchecked"]).optional(),
   sort: z.enum(["new", "old"]).default("new"),
   limit: z.coerce.number().int().min(1).max(500).default(200),
   offset: z.coerce.number().int().min(0).default(0),
@@ -58,6 +62,10 @@ const card = (r: Row, badge: { level: string; paused?: string[] } | undefined, s
   city: r.city,
   category: r.category,
   licenceNumber: r.licenceNumber,
+  /* as FSSAI's FoSCoS search showed it to staff on licenceCheckedOn; null = not checked yet */
+  licenceStatus: r.licenceStatus,
+  licenceCheckedOn: r.licenceCheckedOn,
+  source: r.source,
   location: r.location ? { lat: r.location.y, lng: r.location.x } : null,
   status: r.currentStatus,
   statusOn: r.currentStatusOn,
@@ -96,6 +104,9 @@ export async function restaurantRoutes(app: FastifyInstance) {
     if (q.q) where.push(matches(q.q));
     if (q.city) where.push(eq(restaurants.city, q.city));
     if (q.status) where.push(STATUS_SQL[q.status]!);
+    if (q.licence === "active") where.push(eq(restaurants.licenceStatus, "active"));
+    if (q.licence === "inactive") where.push(inArray(restaurants.licenceStatus, ["inactive", "not_found"]));
+    if (q.licence === "unchecked") where.push(isNull(restaurants.licenceStatus));
     const order = q.sort === "new" ? sql`${restaurants.currentStatusOn} desc nulls last, ${restaurants.name}` : sql`${restaurants.currentStatusOn} asc nulls last, ${restaurants.name}`;
     /* the badge is computed, so with a badge filter we filter before paging */
     const rows = await db
@@ -209,7 +220,17 @@ export async function restaurantRoutes(app: FastifyInstance) {
       ? await db
           .select()
           .from(evidence)
-          .where(and(eq(evidence.restaurantId, id), eq(evidence.status, "verified"), eq(evidence.kind, "photo")))
+          /* photos showing people stay out until faces can be blurred */
+          .where(
+            and(
+              eq(evidence.restaurantId, id),
+              eq(evidence.status, "verified"),
+              eq(evidence.kind, "photo"),
+              eq(evidence.containsPeople, false),
+              /* diners see recent photos only: older ones drop out of the gallery after GALLERY_DAYS */
+              gte(evidence.capturedOn, new Date(Date.parse(d + "T00:00:00Z") - GALLERY_DAYS * 86_400_000).toISOString().slice(0, 10)),
+            ),
+          )
           .orderBy(desc(evidence.capturedOn))
           .limit(60)
       : [];
@@ -224,19 +245,22 @@ export async function restaurantRoutes(app: FastifyInstance) {
       })),
     );
 
+    /* accepted, shared reports from the last 2 weeks, in full; the bill stays private */
+    const since = new Date(deps.now().getTime() - PUBLIC_REPORT_DAYS * 86_400_000);
     const published = await db
       .select({ rep: reports, resp: restaurantResponses })
       .from(reports)
       .leftJoin(restaurantResponses, eq(restaurantResponses.reportId, reports.id))
-      .where(and(eq(reports.restaurantId, id), eq(reports.status, "accepted"), eq(reports.share, true)))
+      .where(and(eq(reports.restaurantId, id), eq(reports.status, "accepted"), eq(reports.share, true), gte(reports.createdAt, since)))
       .orderBy(desc(reports.createdAt))
       .limit(50);
     const kinds = published.length
       ? await db
-          .select({ reportId: reportEvidence.reportId, kind: reportEvidence.kind })
+          .select()
           .from(reportEvidence)
           .where(inArray(reportEvidence.reportId, published.map((p) => p.rep.id)))
       : [];
+    const sign = (key: string) => deps.storage.signedGetUrl(key, 3600);
     const [waiting] = await db
       .select({ n: count() })
       .from(reports)
@@ -247,15 +271,31 @@ export async function restaurantRoutes(app: FastifyInstance) {
       history: [...history].reverse().map((h) => ({ actionOn: h.actionOn, type: h.type, summary: h.summary, authority: h.authority, sourceUrl: h.sourceUrl })),
       compliance,
       gallery,
-      reports: published.map(({ rep, resp }) => ({
-        id: rep.id,
-        ref: reportRef(rep.id),
-        date: isoDateIST(rep.createdAt),
-        category: rep.category,
-        text: rep.text,
-        hasPhoto: kinds.some((k) => k.reportId === rep.id && k.kind === "photo"),
-        response: resp ? { text: resp.text, date: isoDateIST(resp.createdAt), hasEvidence: !!resp.storageKey } : null,
-      })),
+      reports: await Promise.all(
+        published.map(async ({ rep, resp }) => ({
+          id: rep.id,
+          ref: reportRef(rep.id),
+          date: isoDateIST(rep.createdAt),
+          createdAt: rep.createdAt.toISOString(),
+          publicUntil: publicUntil(rep.createdAt).toISOString(),
+          category: rep.category,
+          text: rep.text,
+          hasPhoto: kinds.some((k) => k.reportId === rep.id && k.kind === "photo"),
+          hasBill: kinds.some((k) => k.reportId === rep.id && k.kind === "bill"),
+          /* food photos go public with the report, under the same switch as the kitchen gallery */
+          photos: deps.config.PUBLIC_GALLERY ? await Promise.all(kinds.filter((k) => k.reportId === rep.id && k.kind === "photo").map((k) => sign(k.storageKey))) : [],
+          /* the restaurant's action, once PlateWatch has checked the proof */
+          response:
+            resp && resp.status === "approved"
+              ? {
+                  text: resp.text,
+                  date: isoDateIST(resp.createdAt),
+                  hasEvidence: !!resp.storageKey,
+                  proof: resp.storageKey && (resp.proofKind === "document" || deps.config.PUBLIC_GALLERY) ? { kind: resp.proofKind ?? "photo", url: await sign(resp.storageKey) } : null,
+                }
+              : null,
+        })),
+      ),
       reportsAwaitingModeration: waiting?.n ?? 0,
     };
   });

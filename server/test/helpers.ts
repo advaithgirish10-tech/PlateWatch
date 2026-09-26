@@ -18,7 +18,7 @@ export const TEST_DB =
   "postgres://platewatch:platewatch@localhost:5432/platewatch_test";
 export const ORIGIN = "http://localhost:5173";
 
-export async function setupApp(opts: { sample?: boolean; gallery?: boolean } = {}) {
+export async function setupApp(opts: { sample?: boolean; gallery?: boolean; reportsPerDay?: number; reportsPerWeek?: number } = {}) {
   const config = loadConfig({
     NODE_ENV: "test",
     DATABASE_URL: TEST_DB,
@@ -27,6 +27,8 @@ export async function setupApp(opts: { sample?: boolean; gallery?: boolean } = {
     STORAGE: "memory",
     ALLOWED_ORIGINS: ORIGIN,
     PUBLIC_GALLERY: opts.gallery ? "true" : "false",
+    REPORTS_PER_DAY: String(opts.reportsPerDay ?? 5),
+    REPORTS_PER_WEEK: String(opts.reportsPerWeek ?? 50),
   });
   const { db, pool } = createDb(TEST_DB, 5);
   /* empty every table; replica mode skips the audit log's append-only triggers for this reset only */
@@ -59,21 +61,23 @@ export async function setupApp(opts: { sample?: boolean; gallery?: boolean } = {
       url,
       remoteAddress: o.ip ?? "127.0.0.1",
       payload: o.body as InjectOptions["payload"],
-      headers: { origin: ORIGIN, ...(o.cookie ? { cookie: o.cookie } : {}), ...o.headers },
+      /* the owner tab's requests say so, and carry the owner cookie */
+      headers: { origin: ORIGIN, ...(o.cookie ? { cookie: o.cookie } : {}), ...(o.cookie?.startsWith("pw_owner=") ? { "x-pw-mode": "owner" } : {}), ...o.headers },
     });
 
-  /* sign in a number and return its session cookie */
-  async function login(local: string, o: { admin?: boolean } = {}) {
+  /* sign in a number and return its session cookie; owner: true signs in as the owner tab does */
+  async function login(local: string, o: { admin?: boolean; owner?: boolean } = {}) {
     /* each number signs in from its own address, so the per-address OTP limit doesn't trip */
     const ip = `10.${+local.slice(-6, -4)}.${+local.slice(-4, -2)}.${+local.slice(-2)}`;
     const r1 = await call("POST", "/api/auth/otp/request", { body: { phone: local }, ip });
     if (r1.statusCode !== 200) throw new Error(`OTP request failed: ${r1.body}`);
-    const r2 = await call("POST", "/api/auth/otp/verify", { body: { phone: local, code: lastCode("+91" + local), consent: true }, ip });
+    const r2 = await call("POST", "/api/auth/otp/verify", { body: { phone: local, code: lastCode("+91" + local), consent: true }, ip, headers: o.owner ? { "x-pw-mode": "owner" } : {} });
     if (r2.statusCode !== 200) throw new Error(`OTP verify failed: ${r2.body}`);
-    const c = r2.cookies.find((x) => x.name === "pw_session")!;
+    const name = o.owner ? "pw_owner" : "pw_session";
+    const c = r2.cookies.find((x) => x.name === name)!;
     if (o.admin) await db.update(users).set({ role: "admin" }).where(eq(users.phone, "+91" + local));
     advance(31_000);
-    return `pw_session=${c.value}`;
+    return `${name}=${c.value}`;
   }
 
   /* upload a file the way the browser does: ask for a URL, PUT the bytes to it */
@@ -90,6 +94,9 @@ export async function setupApp(opts: { sample?: boolean; gallery?: boolean } = {
 }
 
 export type T = Awaited<ReturnType<typeof setupApp>>;
+
+/* a minimal PDF: the server checks the file really starts like one */
+export const samplePdf = () => Buffer.from("%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n");
 
 /* a real JPEG carrying EXIF with a GPS position, to prove uploads strip it */
 export async function jpegWithGps() {

@@ -18,6 +18,8 @@
     "db:seed": "tsx --env-file-if-exists=.env src/db/seed.ts",
     "db:studio": "drizzle-kit studio",
     "db:psql": "docker compose exec db psql -U platewatch -d platewatch",
+    "import:osm": "tsx --env-file-if-exists=.env scripts/import-osm.ts",
+    "retention": "tsx --env-file-if-exists=.env scripts/retention.ts",
     "admin:list": "tsx --env-file-if-exists=.env scripts/admins.ts list",
     "admin:grant": "tsx --env-file-if-exists=.env scripts/admins.ts grant",
     "admin:revoke": "tsx --env-file-if-exists=.env scripts/admins.ts revoke"

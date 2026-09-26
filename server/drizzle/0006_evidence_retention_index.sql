@@ -1,0 +1,1 @@
+CREATE INDEX "evidence_kind_created_idx" ON "evidence" USING btree ("kind","created_at");

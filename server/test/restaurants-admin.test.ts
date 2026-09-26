@@ -106,7 +106,7 @@ describe("admin", () => {
     expect(c.categories).toHaveLength(7);
     expect(c.requirements).toHaveLength(27);
     expect(c.requirements[0]).toEqual({ id: "k1", categoryKey: "kitchen", text: "Food preparation areas are clean", weight: 2, critical: false });
-    expect((await t.call("GET", "/api/admin/summary", { cookie: admin })).json()).toEqual({ pendingEvidence: 0, verificationRequests: 0, reportsToModerate: 0, expiringSoon: 0 });
+    expect((await t.call("GET", "/api/admin/summary", { cookie: admin })).json()).toEqual({ pendingEvidence: 0, verificationRequests: 0, reportsToModerate: 0, expiringSoon: 0, licenceChecks: 35 });
   });
 
   it("edits weights and expiry, which flow into the score", async () => {

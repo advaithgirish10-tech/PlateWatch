@@ -22,18 +22,19 @@ const empty=(h,p,extra)=>`<div class="ad-empty"><span class="ad-empty-mark" aria
 const EVST={submitted:["Pending review","pend"],more:["More requested","more"],verified:["Approved","ok"],rejected:["Rejected","no"]};
 const LV={self:"Claimed · self-reported",pending:"Verification requested",platform:"PlateWatch verified"};
 const TYPES={sus:"Suspended",rev:"Revoked",imp:"Improvement notice",ok:"Reinstated"};
+const RES_REASONS=["The proof doesn't show the problem was fixed","The photo is unclear","The PDF isn't about this problem","The proof shows people's faces"];
 const REJECT_REASONS=["No food-safety issue described","Evidence doesn't match the outlet","Duplicate of another report","Personal or abusive content","Not enough detail to act on"];
-const ACTIONS={"evidence.verified":"Approved evidence","evidence.rejected":"Rejected evidence","evidence.more":"Asked for more evidence","evidence.update":"Changed evidence flags","evidence.submit":"Owner submitted evidence",
+const ACTIONS={"evidence.verified":"Approved evidence","evidence.rejected":"Rejected evidence","evidence.more":"Asked for more evidence","evidence.update":"Changed evidence flags","evidence.submit":"Owner submitted evidence","evidence.remove":"Owner removed an upload","evidence.purge":"Deleted old files (photos after 4 months, PDFs after 2 years)",
  "verification.approve":"Approved verification","verification.more":"Asked for more before verifying","verification.reject":"Rejected verification","verification.request":"Owner requested verification",
- "report.accept":"Accepted a report","report.reject":"Rejected a report","report.more":"Asked a reporter for more","report.coordinated":"Marked a report as coordinated","report.keep":"Kept a flagged report published","report.respond":"Owner replied to a report","report.flag":"Owner flagged a report",
- "enforcement.add":"Recorded an official action","restaurant.create":"Added a restaurant","requirement.update":"Changed a requirement","category.update":"Changed evidence expiry","owner.claim":"Restaurant claimed","user.delete":"Account deleted","user.grant_admin":"Made an admin","user.revoke_admin":"Removed an admin"};
+ "report.accept":"Accepted a report","report.reject":"Rejected a report","report.more":"Asked a reporter for more","report.coordinated":"Marked a report as coordinated","report.keep":"Kept a flagged report published","report.false":"Marked a report as false","report.respond":"Owner marked a report resolved","resolution.approve":"Approved a restaurant's proof","resolution.reject":"Turned down a restaurant's proof","report.flag":"Owner flagged a report",
+ "enforcement.add":"Recorded an official action","licence.active":"Licence checked: active","licence.inactive":"Licence checked: inactive","licence.not_found":"Licence checked: not found","restaurant.licence":"Added a licence number","restaurant.import_osm":"Imported from OpenStreetMap","restaurant.create":"Added a restaurant","requirement.update":"Changed a requirement","category.update":"Changed evidence expiry","owner.claim":"Restaurant claimed","user.delete":"Account deleted","user.grant_admin":"Made an admin","user.revoke_admin":"Removed an admin","user.ban":"Banned a reporter","user.unban":"Lifted a ban"};
 
 /* view state; the data itself is always re-read from the API */
 const A={tab:"verify",summary:null,data:{},err:null,q:"",filter:"all",sort:"new",view:"list",offset:0,sel:null,detail:null,box:null,rejecting:null,rec:{q:"",hits:[],pick:null}};
 const PAGE=50;
 
 const TABS=[["verify","Verification requests",s=>s.verificationRequests],["evidence","Evidence",s=>s.pendingEvidence],["reports","Community reports",s=>s.reportsToModerate],
- ["record","Official record"],["scoring","Scoring rules"],["expiry","Evidence expiry"],["activity","Activity log"],
+ ["licence","Licence checks",s=>s.licenceChecks],["record","Official record"],["scoring","Scoring rules"],["expiry","Evidence expiry"],["activity","Activity log"],["banned","Banned accounts"],
  ["escalations","Escalations",null,true],["rules","Escalation rules",null,true],["spot","Spot checks",null,true]];
 
 /* ---------- loading ---------- */
@@ -41,8 +42,10 @@ async function load(tab){
   if(tab==="verify")A.data.verify=(await api("GET","/admin/verification-requests")).items;
   if(tab==="evidence"){const q=new URLSearchParams({filter:A.filter,sort:A.sort,limit:PAGE,offset:0});if(A.q.trim())q.set("q",A.q.trim());A.offset=0;A.data.evidence=await api("GET","/admin/evidence?"+q)}
   if(tab==="reports")A.data.reports=(await api("GET","/admin/reports")).items;
+  if(tab==="licence")A.data.licence=(await api("GET","/admin/licence-checks")).items;
   if(tab==="scoring"||tab==="expiry")A.data.catalog=await api("GET","/admin/catalog");
   if(tab==="activity")A.data.activity=(await api("GET","/admin/audit?limit=100")).items;
+  if(tab==="banned")A.data.banned=(await api("GET","/admin/banned")).items;
 }
 async function show(tab){
   if(tab!==A.tab){A.sel=null;A.detail=null;A.box=null;A.rejecting=null}
@@ -67,11 +70,11 @@ function render(loading){
   let h;
   if(A.err)h=errorHTML(A.err);
   else if(loading&&!hasData(A.tab))h=`<div class="ad-surface">${empty("Loading…","Fetching the latest from PlateWatch.")}</div>`;
-  else h=({verify:verifyHTML,evidence:evidenceHTML,reports:reportsHTML,record:recordHTML,scoring:scoringHTML,expiry:expiryHTML,activity:activityHTML}[A.tab]||soonHTML)();
+  else h=({verify:verifyHTML,evidence:evidenceHTML,reports:reportsHTML,licence:licenceHTML,record:recordHTML,scoring:scoringHTML,expiry:expiryHTML,activity:activityHTML,banned:bannedHTML}[A.tab]||soonHTML)();
   $("adm").innerHTML=`<div class="ad-pane" role="tabpanel">${h}</div><div id="admOverlay"></div>`;
   overlays();
 }
-const hasData=t=>({verify:A.data.verify,evidence:A.data.evidence,reports:A.data.reports,scoring:A.data.catalog,expiry:A.data.catalog,activity:A.data.activity,record:true}[t]!==undefined)||!["verify","evidence","reports","scoring","expiry","activity","record"].includes(t);
+const hasData=t=>({verify:A.data.verify,evidence:A.data.evidence,reports:A.data.reports,licence:A.data.licence,scoring:A.data.catalog,expiry:A.data.catalog,activity:A.data.activity,banned:A.data.banned,record:true}[t]!==undefined)||!["verify","evidence","reports","licence","scoring","expiry","activity","banned","record"].includes(t);
 function errorHTML(e){
   if(e.status===401)return `<div class="ad-surface">${empty("Your session ended","Log in again to keep reviewing.",`<button class="ad-btn ad-btn-pri" data-relogin>Log in</button>`)}</div>`;
   if(e.status===403)return `<div class="ad-surface">${empty("Staff only","This account isn't a PlateWatch admin.")}</div>`;
@@ -108,7 +111,7 @@ function evRow(e){
     <div class="ad-row-body">
       <div class="ad-row-top"><div class="ad-row-id"><h3 class="ad-fn"><button data-open="${e.id}">${esc(e.name)}</button></h3>
         <div class="ad-meta"><span class="ad-meta-strong">${esc(e.restaurant.name)}</span><span>${esc(e.restaurant.area)}, ${esc(e.restaurant.city)}</span><span>${esc(e.requirement.category)}</span><span>Submitted ${ago(e.capturedOn)}</span></div></div>
-        <div class="ad-badges">${badge(e)}</div></div>
+        <div class="ad-badges">${e.status==="submitted"?dueBadge(e):""}${badge(e)}</div></div>
       <div class="ad-row-grid">
         <section class="ad-sec" aria-label="Evidence details"><h4 class="ad-lbl">Evidence details</h4>
           <dl class="ad-dl">
@@ -193,23 +196,61 @@ function closeOverlay(which){if(which==="box")A.box=null;else{A.sel=null;A.detai
 
 /* ---------- community reports ---------- */
 const KIND={photo:"photo",video:"video",bill:"bill",note:"doctor's note"};
+/* every report and every upload is checked within 24 hours of arriving */
+function dueBadge(x){
+  const left=Date.parse(x.verifyBy)-Date.now(),h=Math.ceil(Math.abs(left)/36e5);
+  if(left<0)return `<span class="ad-badge ad-b-no">Overdue by ${h} h</span>`;
+  return `<span class="ad-badge ${left<4*36e5?"ad-b-more":""}" title="Verify by ${esc(new Date(x.verifyBy).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit",timeZone:"Asia/Kolkata"}))}">Verify within ${h} h</span>`;
+}
+/* 2 reports marked false in 7 days: an admin may ban the number */
+function reporterHTML(x){
+  const n=x.reporterFalseThisWeek||0;
+  if(x.reporterBanned)return `<span class="ad-badge ad-b-no">Banned</span>`;
+  const t=n?`${n} false report${n>1?"s":""} this week`:"No false reports this week";
+  return n>=2&&x.reporterId?`${t} <button class="ad-btn ad-btn-danger ad-btn-sm" data-ban="${esc(x.reporterId)}">Ban reporter</button>`:t;
+}
+/* the restaurant's "action taken": check the proof within 24 hours, then it's public next to the report */
+function resolutionHTML(x){
+  const r=x.resolution;if(!r||r.status!=="pending")return "";
+  const p=r.proof,rej=A.rejectingRes===x.id;
+  const proof=!p?"":p.kind==="document"?`<a class="ad-btn ad-btn-out" href="${esc(p.url)}" target="_blank" rel="noopener">${ICO.doc}Open PDF proof</a>`
+    :`<figure class="ad-scph"><a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="Proof photo for ${esc(x.ref)}"></a><figcaption><b>Proof photo</b></figcaption></figure>`;
+  return `<div class="ad-note ad-res"><span class="ad-lbl">Restaurant says it's resolved · ${dueBadge(r)}</span>${esc(r.text)}<div class="ad-scphotos" style="margin-top:10px">${proof}</div>
+    ${rej?`<div class="ad-reason"><label class="ad-select"><span>Reason</span><select id="admResReason">${RES_REASONS.map(o=>`<option>${esc(o)}</option>`).join("")}</select></label><button class="ad-btn ad-btn-out" data-res="cancel" data-rep="${x.id}">Cancel</button><button class="ad-btn ad-btn-danger ad-btn-danger-solid" data-res="reject-go" data-rep="${x.id}">Turn down proof</button></div>`
+      :`<div class="ad-acts"><span class="ad-td-muted">Approving shows the comment and proof next to the report on the public profile.</span><span class="ad-acts-main"><button class="ad-btn ad-btn-danger" data-res="reject" data-rep="${x.id}">Proof not enough</button><button class="ad-btn ad-btn-pri" data-res="approve" data-rep="${x.id}">Approve proof</button></span></div>`}</div>`;
+}
 function reportRow(x){
   const pend=x.status==="pending",rej=A.rejecting===x.id;
+  /* in the queue only because the restaurant sent proof */
+  const onlyProof=!pend&&!x.flaggedByOwner;
   const age=x.numberAgeDays==null?"No verified number":x.numberAgeDays===0?"Number verified today":x.numberAgeDays===1?"Number verified yesterday":`Number verified ${x.numberAgeDays} days ago`;
   return `<article class="ad-row ad-row-plain"><div class="ad-row-body">
     <div class="ad-row-top"><div class="ad-row-id"><h3 class="ad-fn">${esc(x.place.name||"Unknown place")}${x.place.id?"":` <span class="ad-td-muted">(not listed)</span>`}</h3>
-      <div class="ad-meta"><span>${esc([x.place.area,x.place.city].filter(Boolean).join(", "))}</span><span>${esc(x.category)}</span><span>${esc(x.ref)}</span><span>Received ${ago(x.receivedOn)}</span><span>via ${x.channel==="whatsapp"?"WhatsApp":"the website chat"}</span></div></div>
-      <div class="ad-badges">${pend?`<span class="ad-badge ad-b-pend">${x.askMore?"More requested":"Pending"}</span>`:`<span class="ad-badge ad-b-ok">Published</span>`}${x.share?"":`<span class="ad-badge">Kept private</span>`}${x.flaggedByOwner?`<span class="ad-badge ad-b-flag">${ICO.flag}Restaurant flagged as incorrect</span>`:""}</div></div>
+      <div class="ad-meta"><span>${esc([x.place.area,x.place.city].filter(Boolean).join(", "))}</span><span>${esc(x.category)}</span><span>${esc(x.ref)}</span><span>Received ${ago(x.receivedOn)}</span><span>via ${x.channel==="whatsapp"?"WhatsApp":"the website"}</span></div></div>
+      <div class="ad-badges">${x.resolution&&x.resolution.status==="pending"?`<span class="ad-badge ad-b-more">Proof to check</span>`:""}${pend?dueBadge(x):""}${pend?`<span class="ad-badge ad-b-pend">${x.askMore?"More requested":"Pending"}</span>`:`<span class="ad-badge ad-b-ok">Published</span>`}${x.share?"":`<span class="ad-badge">Kept private</span>`}${x.flaggedByOwner?`<span class="ad-badge ad-b-flag">${ICO.flag}Restaurant flagged as incorrect</span>`:""}</div></div>
     <blockquote class="ad-quote">${esc(x.text)}</blockquote>
     ${x.files.length?`<div class="ad-scphotos">${x.files.map(f=>f.kind==="photo"||(f.kind==="bill"&&/\.(jpe?g|png|webp)$/i.test(f.name))?`<figure class="ad-scph"><a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(KIND[f.kind])} attached to ${esc(x.ref)}"></a><figcaption><b>${esc(cap(KIND[f.kind]))}</b></figcaption></figure>`:`<figure class="ad-scph"><a class="ad-pv ad-pv-none" href="${esc(f.url)}" target="_blank" rel="noopener">${ICO.doc}<span>Open ${esc(KIND[f.kind])}</span></a></figure>`).join("")}</div>`:""}
-    ${x.response?`<div class="ad-note"><span class="ad-lbl">Restaurant response</span>${esc(x.response)}</div>`:""}
-    <dl class="ad-facts"><div><dt>Evidence</dt><dd>${x.evidence.length?esc(x.evidence.map(k=>KIND[k]).join(", ")):"None"}</dd></div><div><dt>Reporter</dt><dd>${age}</dd></div><div><dt>Counts toward escalation</dt><dd>${esc(x.countsTowardEscalation)}</dd></div></dl>
+    ${x.resolution&&x.resolution.status!=="pending"?`<div class="ad-note"><span class="ad-lbl">Restaurant's action · proof ${x.resolution.status}</span>${esc(x.resolution.text)}</div>`:""}${resolutionHTML(x)}
+    <dl class="ad-facts"><div><dt>Evidence</dt><dd>${x.evidence.length?esc(x.evidence.map(k=>KIND[k]).join(", ")):"None"}</dd></div><div><dt>Reporter</dt><dd>${age}<div class="ad-td-muted" style="margin-top:2px">${reporterHTML(x)}</div></dd></div><div><dt>Counts toward escalation</dt><dd>${esc(x.countsTowardEscalation)}</dd></div></dl>
     ${rej?`<div class="ad-reason"><label class="ad-select"><span>Reason</span><select id="admReason">${REJECT_REASONS.map(o=>`<option>${o}</option>`).join("")}</select></label><button class="ad-btn ad-btn-out" data-m="cancel" data-rep="${x.id}">Cancel</button><button class="ad-btn ad-btn-danger ad-btn-danger-solid" data-m="reject-go" data-rep="${x.id}">Reject report</button></div>`:""}
-    <div class="ad-acts">${pend?`<button class="ad-link" data-m="coordinated" data-rep="${x.id}">Mark as coordinated</button><span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-m="more" data-rep="${x.id}" ${x.askMore||x.numberAgeDays==null?"disabled":""}>Ask reporter for more</button><button class="ad-btn ad-btn-danger" data-m="reject" data-rep="${x.id}">Reject with reason</button><button class="ad-btn ad-btn-pri" data-m="accept" data-rep="${x.id}">Accept</button></span>`
-      :`<span></span><span class="ad-acts-main"><button class="ad-btn ad-btn-danger" data-m="reject" data-rep="${x.id}">Reject with reason</button><button class="ad-btn ad-btn-pri" data-m="keep" data-rep="${x.id}">Keep published</button></span>`}</div>
+    ${onlyProof?"":`<div class="ad-acts">${pend?`<button class="ad-link" data-m="coordinated" data-rep="${x.id}">Mark as coordinated</button><span class="ad-acts-main"><button class="ad-btn ad-btn-out" data-m="more" data-rep="${x.id}" ${x.askMore||x.numberAgeDays==null?"disabled":""}>Ask reporter for more</button><button class="ad-btn ad-btn-danger" data-m="false" data-rep="${x.id}" title="The complaint isn't true. Counts against the reporter.">False report</button><button class="ad-btn ad-btn-danger" data-m="reject" data-rep="${x.id}">Reject with reason</button><button class="ad-btn ad-btn-pri" data-m="accept" data-rep="${x.id}">Accept</button></span>`
+      :`<span></span><span class="ad-acts-main"><button class="ad-btn ad-btn-danger" data-m="false" data-rep="${x.id}">False report</button><button class="ad-btn ad-btn-danger" data-m="reject" data-rep="${x.id}">Reject with reason</button><button class="ad-btn ad-btn-pri" data-m="keep" data-rep="${x.id}">Keep published</button></span>`}</div>`}
   </div></article>`;
 }
 const reportsHTML=()=>`<div class="ad-surface">${(A.data.reports||[]).map(reportRow).join("")||empty("No reports waiting","Every community report has been moderated.")}</div>`;
+
+/* ---------- FSSAI licence checks: done by hand on FoSCoS (its search has a captcha) ---------- */
+const LIC={active:"Active",inactive:"Inactive or expired",not_found:"Not found"};
+function licenceHTML(){
+  const list=A.data.licence||[];
+  return `<div class="ad-sechead"><p>FSSAI's licence search (FoSCoS) has a captcha, so these checks are done by hand: open FoSCoS, choose <b>FBO Search</b>, paste the licence number, then record what it shows. Checks repeat every 90 days. Claimed restaurants come first.</p><a class="ad-btn ad-btn-out" href="https://foscos.fssai.gov.in/" target="_blank" rel="noopener">Open FoSCoS</a></div>
+    <div class="ad-surface ad-tbl">${list.length?`<table><thead><tr><th>Restaurant</th><th>Licence number</th><th>Last check</th><th><span class="sr-only">Record the result</span></th></tr></thead><tbody>${list.map(r=>`<tr>
+      <td><b>${esc(r.name)}</b><div class="ad-td-muted">${esc(r.area)}, ${esc(r.city)}${r.claimed?" · claimed":""}${r.source==="osm"?" · from OpenStreetMap":""}</div></td>
+      <td><span class="sc-code">${esc(r.licenceNumber)}</span> <button class="ad-link" data-copy-lic="${esc(r.licenceNumber)}">Copy</button></td>
+      <td class="ad-td-muted">${r.licenceStatus?`${LIC[r.licenceStatus]} · ${fmt(r.licenceCheckedOn)}`:"Never checked"}</td>
+      <td><span class="ad-acts-main"><button class="ad-btn ad-btn-pri" data-lc="active" data-rid="${r.id}">Active</button><button class="ad-btn ad-btn-out" data-lc="inactive" data-rid="${r.id}">Inactive or expired</button><button class="ad-btn ad-btn-danger" data-lc="not_found" data-rid="${r.id}">Not found</button></span></td></tr>`).join("")}</tbody></table>`
+      :empty("No licence checks due","Every licence on PlateWatch was checked in the last 90 days.")}</div>`;
+}
 
 /* ---------- official record: add actions and restaurants ---------- */
 function recordHTML(){
@@ -220,7 +261,8 @@ function recordHTML(){
     <label class="ad-search">${ICO.search}<input id="recQ" type="search" placeholder="Find a restaurant by name, area or licence number…" value="${esc(R.q)}" aria-label="Find a restaurant" autocomplete="off"></label>
     ${R.hits.length&&!p?`<ul class="ad-hist" style="margin-top:12px">${R.hits.map(h=>`<li><button class="ad-link" data-pick="${h.id}">${esc(h.name)}</button><span class="ad-hist-d">${esc(h.area)}, ${esc(h.city)} · ${h.status?TYPES[h.status]:"No official action"}</span></li>`).join("")}</ul>`:""}
     ${p?`<div style="margin-top:18px">
-      <div class="ad-row-top"><div class="ad-row-id"><h3 class="ad-fn">${esc(p.name)}</h3><div class="ad-meta"><span>${esc(p.area)}, ${esc(p.city)}</span><span>FSSAI ${esc(p.licenceNumber)}</span><span>${p.status?TYPES[p.status]+" since "+fmt(p.statusOn):"No official action on record"}</span></div></div><button class="ad-btn ad-btn-out" data-unpick>Choose another</button></div>
+      <div class="ad-row-top"><div class="ad-row-id"><h3 class="ad-fn">${esc(p.name)}</h3><div class="ad-meta"><span>${esc(p.area)}, ${esc(p.city)}</span><span>${p.licenceNumber?`FSSAI ${esc(p.licenceNumber)}${p.licenceStatus?" · "+LIC[p.licenceStatus]+" "+fmt(p.licenceCheckedOn):" · not checked"}`:"No licence number yet"}</span><span>${p.status?TYPES[p.status]+" since "+fmt(p.statusOn):"No official action on record"}</span></div></div><button class="ad-btn ad-btn-out" data-unpick>Choose another</button></div>
+      ${p.licenceNumber?"":`<form class="form" id="licForm" style="margin-top:14px;max-width:560px"><label for="licNum">FSSAI licence number</label><input class="input" id="licNum" required inputmode="numeric" pattern="\\d{14}" maxlength="14" placeholder="14 digits" style="font-family:var(--mono)"><div><button class="ad-btn ad-btn-out" type="submit">Save licence number</button></div></form>`}
       ${p.history.length?`<ul class="ad-hist" style="margin-top:10px">${p.history.map(h=>`<li><span class="ad-hist-n">${TYPES[h.type]} · ${esc(h.summary)}</span><span class="ad-hist-d">${fmt(h.actionOn)}${h.sourceUrl?` · <a href="${esc(h.sourceUrl)}" target="_blank" rel="noopener">source</a>`:""}</span></li>`).join("")}</ul>`:""}
       <form class="form" id="recForm" style="margin-top:16px;max-width:560px">
         <label for="recType">Action</label><select class="input" id="recType" required>${Object.entries(TYPES).map(([k,l])=>`<option value="${k}">${l}</option>`).join("")}</select>
@@ -237,7 +279,7 @@ function recordHTML(){
       <label for="nrArea">Area</label><input class="input" id="nrArea" required minlength="2" maxlength="120" placeholder="e.g. Dadar West">
       <label for="nrCity">City</label><input class="input" id="nrCity" required minlength="2" maxlength="80" placeholder="e.g. Mumbai">
       <label for="nrCat">Type</label><input class="input" id="nrCat" required minlength="2" maxlength="60" placeholder="e.g. Restaurant, Café, Sweet shop">
-      <label for="nrLic">FSSAI licence number</label><input class="input" id="nrLic" required inputmode="numeric" pattern="\\d{14}" maxlength="14" placeholder="14 digits" style="font-family:var(--mono)">
+      <label for="nrLic">FSSAI licence number <span class="muted">(optional)</span></label><input class="input" id="nrLic" inputmode="numeric" pattern="\\d{14}" maxlength="14" placeholder="14 digits" style="font-family:var(--mono)">
       <label for="nrLat">Latitude and longitude <span class="muted">(optional, for the map)</span></label><div style="display:flex;gap:10px"><input class="input" id="nrLat" type="number" step="any" min="-90" max="90" placeholder="19.0760"><input class="input" id="nrLng" type="number" step="any" min="-180" max="180" placeholder="72.8777"></div>
       <label for="nrVer">Record checked on</label><input class="input" id="nrVer" type="date" required max="${today}" value="${today}">
       <div><button class="ad-btn ad-btn-pri" type="submit">Add restaurant</button></div>
@@ -265,6 +307,15 @@ function activityHTML(){
   const when=t=>new Date(t).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit",timeZone:"Asia/Kolkata"});
   return `<div class="ad-sechead"><p>The latest 100 actions. This log can't be edited or deleted, even by staff.</p></div>
     <div class="ad-surface ad-tbl"><table><thead><tr><th>When</th><th>What</th><th>On</th><th>By</th></tr></thead><tbody>${list.map(a=>`<tr><td class="ad-td-muted">${when(a.createdAt)}</td><td>${esc(ACTIONS[a.action]||a.action)}${a.data&&a.data.reason?` <span class="ad-td-muted">· ${esc(a.data.reason)}</span>`:""}</td><td class="ad-td-muted">${esc(a.entityType)} ${esc(String(a.entityId).slice(0,8))}</td><td class="ad-td-muted">${a.actorId?esc(a.actorId.slice(0,8)):"System"}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+/* ---------- banned accounts ---------- */
+function bannedHTML(){
+  const list=A.data.banned||[];
+  if(!list.length)return `<div class="ad-surface">${empty("No banned accounts","A reporter can be banned from Community reports after 2 of their reports are marked false in 7 days.")}</div>`;
+  const when=t=>new Date(t).toLocaleString("en-IN",{day:"numeric",month:"short",year:"numeric",timeZone:"Asia/Kolkata"});
+  return `<div class="ad-sechead"><p>Banned numbers can't log in or report. Numbers are partly hidden.</p></div>
+    <div class="ad-surface ad-tbl"><table><thead><tr><th>Number</th><th>Banned on</th><th>Why</th><th></th></tr></thead><tbody>${list.map(u=>`<tr><td style="font-family:var(--mono)">${esc(u.phone)}</td><td class="ad-td-muted">${when(u.bannedAt)}</td><td class="ad-td-muted">${esc(u.reason||"")}</td><td style="text-align:right"><button class="ad-btn ad-btn-out" data-unban="${esc(u.id)}">Lift ban</button></td></tr>`).join("")}</tbody></table></div>`;
 }
 
 /* ---------- not built yet ---------- */
@@ -314,9 +365,35 @@ root.addEventListener("click",async e=>{
   if(m){const id=+m.dataset.rep,d=m.dataset.m;
     if(d==="reject"){A.rejecting=id;render();const s=$("admReason");if(s)s.focus();return}
     if(d==="cancel"){A.rejecting=null;render();return}
+    if(d==="false"){
+      const x=(A.data.reports||[]).find(r=>r.id===id),n=((x&&x.reporterFalseThisWeek)||0)+1;
+      if(!confirm("Mark this report as false? It's removed, and it counts against the reporter. 2 false reports in a week lets you ban the number."))return;
+      A.rejecting=null;
+      await act(()=>api("POST",`/admin/reports/${id}/decision`,{decision:"false"}),"Marked as false. It counts against the reporter.");
+      /* the second false report in a week: offer the ban now, while the reporter is in front of the admin */
+      if(x&&x.reporterId&&!x.reporterBanned&&n>=2&&confirm(`This reporter now has ${n} false reports this week. Ban the number now? They're signed out and can't log in or report until an admin lifts the ban.`))
+        act(()=>api("POST",`/admin/users/${x.reporterId}/ban`),"Reporter banned");
+      return}
     const body=d==="reject-go"?{decision:"reject",reason:$("admReason").value}:{decision:d};
     A.rejecting=null;
     act(()=>api("POST",`/admin/reports/${id}/decision`,body),{accept:"Report accepted and published",["reject-go"]:"Report rejected",more:"Asked the reporter for more",coordinated:"Marked as coordinated",keep:"Kept published"}[d]);return}
+  const rs=t.closest("[data-res]");
+  if(rs){const id=+rs.dataset.rep,d=rs.dataset.res;
+    if(d==="reject"){A.rejectingRes=id;render();const s=$("admResReason");if(s)s.focus();return}
+    if(d==="cancel"){A.rejectingRes=null;render();return}
+    const body=d==="approve"?{decision:"approve"}:{decision:"reject",reason:$("admResReason").value};
+    A.rejectingRes=null;
+    act(()=>api("POST",`/admin/reports/${id}/resolution`,body),d==="approve"?"Proof approved. It's on the public profile now.":"Proof turned down. The restaurant can send new proof.");return}
+  const bn=t.closest("[data-ban]");
+  if(bn){if(!confirm("Ban this reporter? They're signed out everywhere and can't log in or report again until an admin lifts the ban."))return;
+    act(()=>api("POST",`/admin/users/${bn.dataset.ban}/ban`),"Reporter banned");return}
+  const ub=t.closest("[data-unban]");
+  if(ub){if(!confirm("Lift this ban? The number can log in and report again."))return;
+    act(()=>api("POST",`/admin/users/${ub.dataset.unban}/unban`),"Ban lifted");return}
+  const lc=t.closest("[data-lc]");
+  if(lc){act(()=>api("POST",`/admin/restaurants/${lc.dataset.rid}/licence-check`,{status:lc.dataset.lc}),"Licence check recorded");return}
+  const cp=t.closest("[data-copy-lic]");
+  if(cp){navigator.clipboard?.writeText(cp.dataset.copyLic).then(()=>toast("Licence number copied"),()=>toast(cp.dataset.copyLic));return}
   const pk=t.closest("[data-pick]");
   if(pk){try{A.rec.pick=await api("GET","/restaurants/"+pk.dataset.pick);render()}catch(err){toast(err.message)}return}
   if(t.closest("[data-unpick]")){A.rec.pick=null;render();return}
@@ -342,13 +419,16 @@ root.addEventListener("change",e=>{
 });
 root.addEventListener("submit",async e=>{
   e.preventDefault();
+  if(e.target.id==="licForm"){const p=A.rec.pick;
+    try{await api("PATCH",`/admin/restaurants/${p.id}`,{licenceNumber:$("licNum").value.trim()});A.rec.pick=await api("GET","/restaurants/"+p.id);toast("Licence number saved. Check it in Licence checks.");render()}catch(err){toast(err.message)}
+    return}
   if(e.target.id==="recForm"){const p=A.rec.pick,src=$("recSrc").value.trim();
     try{await api("POST",`/admin/restaurants/${p.id}/actions`,{type:$("recType").value,actionOn:$("recDate").value,summary:$("recSum").value.trim(),...(src?{sourceUrl:src}:{})});
       A.rec.pick=await api("GET","/restaurants/"+p.id);toast("Official action recorded");render()}catch(err){toast(err.message)}
     return}
   if(e.target.id==="newRest"){const lat=$("nrLat").value,lng=$("nrLng").value;
     if(!!lat!==!!lng){toast("Give both latitude and longitude, or neither.");return}
-    try{const r=await api("POST","/admin/restaurants",{name:$("nrName").value.trim(),area:$("nrArea").value.trim(),city:$("nrCity").value.trim(),category:$("nrCat").value.trim(),licenceNumber:$("nrLic").value.trim(),lastVerifiedOn:$("nrVer").value,...(lat?{location:{lat:+lat,lng:+lng}}:{})});
+    try{const r=await api("POST","/admin/restaurants",{name:$("nrName").value.trim(),area:$("nrArea").value.trim(),city:$("nrCity").value.trim(),category:$("nrCat").value.trim(),...($("nrLic").value.trim()?{licenceNumber:$("nrLic").value.trim()}:{}),lastVerifiedOn:$("nrVer").value,...(lat?{location:{lat:+lat,lng:+lng}}:{})});
       e.target.reset();A.rec.pick=await api("GET","/restaurants/"+r.id);A.rec.q="";A.rec.hits=[];toast("Restaurant added");render()}catch(err){toast(err.message)}
   }
 });

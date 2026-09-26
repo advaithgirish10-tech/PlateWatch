@@ -14,13 +14,30 @@ export class ApiError extends Error {
 
 const OFFLINE = "Can't reach PlateWatch right now. Check your connection and try again.";
 
+/*
+ * Each tab is either the user site or the restaurant owner's dashboard, with its own login.
+ * The owner dashboard always opens in a new tab (?as=owner); the tab remembers its mode until it's closed,
+ * and tells the API which login to use on every request.
+ */
+const OWNER_HASH = /^#(owner-login|restaurants|dashboard)\b/;
+export const MODE = (() => {
+  const q = new URLSearchParams(location.search).get("as");
+  let m = q === "owner" || q === "user" ? q : null;
+  try { m = m || sessionStorage.getItem("pw_mode"); } catch (_) { /* storage blocked: decide from the address */ }
+  m = m || (OWNER_HASH.test(location.hash) ? "owner" : "user");
+  try { sessionStorage.setItem("pw_mode", m); } catch (_) { /* the address still says it */ }
+  return m;
+})();
+/* open PlateWatch in a new tab as the other kind of login */
+export const openTab = (mode, hash) => window.open(`${location.pathname}?as=${mode}#${hash}`, "_blank", "noopener");
+
 export async function api(method, path, body, { timeout = 15000 } = {}) {
   let res;
   try {
     res = await fetch("/api" + path, {
       method,
       credentials: "same-origin",
-      headers: body !== undefined ? { "content-type": "application/json" } : {},
+      headers: { "x-pw-mode": MODE, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(timeout),
     });

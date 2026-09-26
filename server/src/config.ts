@@ -35,9 +35,11 @@ const schema = z
     S3_SECRET_ACCESS_KEY: z.string().default(""),
     S3_FORCE_PATH_STYLE: bool,
     CONSENT_VERSION: z.string().default("2026-09-v1"),
-    /* approved kitchen photos on public profiles; keep off until faces are blurred server-side */
-    PUBLIC_GALLERY: bool,
-    REPORTS_PER_DAY: z.coerce.number().int().positive().default(5),
+    /* approved kitchen photos on public profiles (photos marked as showing people are never included) */
+    PUBLIC_GALLERY: z.enum(["true", "false", "1", "0", ""]).default("true").transform((v) => v !== "false" && v !== "0"),
+    REPORTS_PER_DAY: z.coerce.number().int().positive().default(1),
+    /* in any 7 days (rolling), on top of the daily limit */
+    REPORTS_PER_WEEK: z.coerce.number().int().positive().default(5),
     UPLOADS_PER_DAY: z.coerce.number().int().positive().default(60),
   })
   .superRefine((c, ctx) => {

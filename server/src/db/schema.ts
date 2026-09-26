@@ -35,6 +35,10 @@ export const reportStatus = pgEnum("report_status", ["pending", "accepted", "rej
 export const reportChannel = pgEnum("report_channel", ["web", "whatsapp"]);
 export const reportEvidenceKind = pgEnum("report_evidence_kind", ["photo", "video", "bill", "note"]);
 export const uploadPurpose = pgEnum("upload_purpose", ["evidence", "report", "response"]);
+/* where a restaurant record came from */
+export const restaurantSource = pgEnum("restaurant_source", ["staff", "osm", "sample"]);
+/* the licence as FSSAI's FoSCoS search showed it to a staff member; null = not checked yet */
+export const licenceStatus = pgEnum("licence_status", ["active", "inactive", "not_found"]);
 
 /* ---------- people and sign-in ---------- */
 
@@ -50,6 +54,10 @@ export const users = pgTable("users", {
   consentVersion: text("consent_version"),
   consentedAt: ts("consented_at"),
   lastLoginAt: ts("last_login_at"),
+  /* set only by an admin, after repeated false reports; a banned number can't log in */
+  bannedAt: ts("banned_at"),
+  bannedReason: text("banned_reason"),
+  bannedBy: uuid("banned_by"),
   createdAt: createdAt(),
 });
 
@@ -69,6 +77,10 @@ export const otpChallenges = pgTable(
   (t) => [index("otp_phone_created_idx").on(t.phone, t.createdAt), index("otp_ip_created_idx").on(t.ip, t.createdAt)],
 );
 
+/* a user login (reports, follows, alerts) and an owner login (the restaurant dashboard) are separate sessions,
+   so a browser can be a diner in one tab and a restaurant owner in another */
+export const sessionKind = pgEnum("session_kind", ["user", "owner"]);
+
 export const sessions = pgTable(
   "sessions",
   {
@@ -78,6 +90,7 @@ export const sessions = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     /* sha256 of the cookie token; the token itself is never stored */
     tokenHash: text("token_hash").notNull().unique(),
+    kind: sessionKind("kind").notNull().default("user"),
     userAgent: text("user_agent"),
     ip: text("ip"),
     expiresAt: ts("expires_at").notNull(),
@@ -97,12 +110,18 @@ export const restaurants = pgTable(
     area: text("area").notNull(),
     city: text("city").notNull(),
     category: text("category").notNull(),
-    licenceNumber: text("licence_number").notNull().unique(),
+    /* unknown for places imported from OpenStreetMap until the owner or staff add it */
+    licenceNumber: text("licence_number").unique(),
+    licenceStatus: licenceStatus("licence_status"),
+    licenceCheckedOn: date("licence_checked_on"),
+    source: restaurantSource("source").notNull().default("staff"),
+    /* e.g. "node/123456": re-running the import updates the same row */
+    osmId: text("osm_id").unique(),
     /* drizzle-kit leaves the SRID out of generated SQL: new geometry columns need "4326" added to the migration by hand */
     location: geometry("location", { type: "point", mode: "xy", srid: 4326 }),
     /* one lowercase string for substring and typo-tolerant (trigram) search */
     searchText: text("search_text").generatedAlwaysAs(
-      sql`lower(name || ' ' || area || ' ' || city || ' ' || category || ' ' || licence_number)`,
+      sql`lower(name || ' ' || area || ' ' || city || ' ' || category || ' ' || coalesce(licence_number, ''))`,
     ),
     /* latest official action, kept in step with enforcement_actions by the service that writes them */
     currentStatus: actionType("current_status"),
@@ -271,6 +290,7 @@ export const evidence = pgTable(
   (t) => [
     index("evidence_status_idx").on(t.status, t.createdAt),
     index("evidence_restaurant_req_idx").on(t.restaurantId, t.requirementId),
+    index("evidence_kind_created_idx").on(t.kind, t.createdAt),
   ],
 );
 
@@ -313,6 +333,8 @@ export const reports = pgTable(
     askMore: boolean("ask_more").notNull().default(false),
     rejectReason: text("reject_reason"),
     coordinated: boolean("coordinated").notNull().default(false),
+    /* a moderator found the complaint untrue; two in 7 days let an admin ban the reporter */
+    falseReport: boolean("false_report").notNull().default(false),
     notifiedAt: ts("notified_at"),
     sentToRegulatorOn: date("sent_to_regulator_on"),
     officialActionOn: date("official_action_on"),
@@ -340,6 +362,10 @@ export const reportEvidence = pgTable("report_evidence", {
   createdAt: createdAt(),
 });
 
+/* the owner's "action taken" on a report: a comment and proof (a live photo or a PDF), checked by PlateWatch before it's public */
+export const resolutionStatus = pgEnum("resolution_status", ["pending", "approved", "rejected"]);
+export const proofKind = pgEnum("proof_kind", ["photo", "document"]);
+
 export const restaurantResponses = pgTable("restaurant_responses", {
   reportId: integer("report_id")
     .primaryKey()
@@ -347,6 +373,11 @@ export const restaurantResponses = pgTable("restaurant_responses", {
   text: text("text").notNull(),
   storageKey: text("storage_key"),
   originalName: text("original_name"),
+  proofKind: proofKind("proof_kind"),
+  status: resolutionStatus("status").notNull().default("pending"),
+  reviewNote: text("review_note"),
+  reviewedBy: uuid("reviewed_by").references(() => users.id, { onDelete: "set null" }),
+  reviewedAt: ts("reviewed_at"),
   respondedBy: uuid("responded_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: createdAt(),
 });

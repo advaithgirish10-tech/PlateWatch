@@ -5,8 +5,10 @@
  * QRCode is a global loaded in index.html (qrcodejs 1.0.0).
  */
 /* global QRCode */
-import { api, localPhone, uploadFile } from "./api.js";
+import { api, localPhone, uploadFile, MODE, openTab } from "./api.js";
 import { createAdmin } from "./admin.js";
+import { createCamera } from "./camera.js";
+import { createRemark } from "./remark.js";
 import { createReporting } from "./bot.js";
 import { createSpotChecks } from "./spotcheck.js";
 import { createMap, dotHTML, badgeHTML, badgeLabel, pausedNote, legendHTML } from "./map.js";
@@ -42,12 +44,13 @@ const pages=["home","tracker","detail","report","verify","login","account","biz"
 /* each page has a #hash (letters, digits, hyphens) so browser back/forward and deep links work */
 const PAGE_HASH={home:"home",tracker:"tracker",report:"report",verify:"how-it-works",login:"login",account:"account",biz:"restaurants",dash:"dashboard",admin:"admin",about:"about"};
 const PAGE_NAME={home:"Home",tracker:"Tracker",report:"Report",verify:"How it works",login:"Log in",account:"Your alerts",biz:"For restaurants",dash:"Dashboard",admin:"Admin",about:"About"};
-const hashFor=(p,arg)=>p==="detail"?"profile-"+arg:PAGE_HASH[p];
+const hashFor=(p,arg)=>p==="detail"?"profile-"+arg:p==="login"&&arg==="owner"?"owner-login":PAGE_HASH[p];
 function parseHash(h){
   h=(h||"").replace(/^#/,"");
   /* any profile number is accepted here; the profile page says so if it doesn't exist */
   const m=h.match(/^profile-(\d+)$/);if(m)return {p:"detail",arg:+m[1]};
   if(h==="tracker-map")return {p:"tracker"};   /* old link: the tracker is the map now */
+  if(h==="owner-login")return {p:"login",arg:"owner"};
   const p=Object.keys(PAGE_HASH).find(k=>PAGE_HASH[k]===h);return p?{p}:null;
 }
 S.page={p:"home"};S.stack=[];
@@ -55,6 +58,19 @@ S.page={p:"home"};S.stack=[];
 function backTarget(id){for(let i=S.stack.length-1;i>=0;i--){const e=S.stack[i];if(e.p==="login"||(e.p==="detail"&&e.arg===id))continue;return e}return {p:"tracker"}}
 const pageName=e=>e.p==="detail"?(place(e.arg)?place(e.arg).name:"restaurant"):PAGE_NAME[e.p];
 function go(p,arg,opt){
+  /* the restaurant dashboard has its own tab and its own login: from the user site it opens a new tab */
+  if(MODE==="user"&&(p==="biz"||p==="dash"||(p==="login"&&arg==="owner"))){
+    if(opt&&opt.fromHash){toast("Restaurant owners: use “For restaurants”. The dashboard opens in its own tab.");p="home";arg=undefined}
+    else{openTab("owner",p==="login"?"owner-login":hashFor(p,arg));toast("The restaurant dashboard opened in a new tab.");return}
+  }
+  if(MODE==="owner"){
+    /* the owner tab has no user pages: logins are owner logins, reports and admin open the user site in a new tab */
+    if(p==="login")arg="owner";
+    if(p==="account"){if(S.user){p=S.owner!=null?"dash":"biz";arg=S.owner!=null?"overview":undefined}else{p="login";arg="owner"}}
+    if(p==="admin"){openTab("user","admin");toast("Admin opened in a new tab, with your user login.");return}
+  }
+  /* the owner login, already signed in: straight to the dashboard, or to claiming a restaurant */
+  if(p==="login"&&arg==="owner"&&S.user){p=S.owner!=null?"dash":"biz";arg=S.owner!=null?"overview":undefined}
   if(p==="account"&&!S.user){S.after="account";p="login"}
   /* staff only: signed-out visitors log in first, everyone else goes home */
   if(p==="admin"&&!isAdmin()){if(!S.user){S.after="admin";p="login"}else{toast("That page is for PlateWatch staff only.");p="home";arg=undefined}}
@@ -83,11 +99,18 @@ addEventListener("hashchange",()=>{
 });
 document.addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(b){e.preventDefault();go(b.dataset.go)}});
 document.getElementById("menuBtn").onclick=e=>{const d=document.getElementById("drawer");d.hidden=!d.hidden;e.currentTarget.setAttribute("aria-expanded",String(!d.hidden))};
-document.getElementById("authBtn").onclick=()=>{if(S.user){go("account");return}S.after="account";go("login")};
+document.getElementById("authBtn").onclick=()=>{
+  if(MODE==="owner"){if(S.user)go(S.owner!=null?"dash":"biz",S.owner!=null?"overview":undefined);else go("login","owner");return}
+  if(S.user){go("account");return}S.after="account";go("login")};
+/* the diner login from the owner tab opens the user site in its own tab */
+document.addEventListener("click",e=>{if(e.target.closest("[data-user-tab]")){e.preventDefault();openTab("user","login");toast("PlateWatch opened in a new tab for your user login.")}});
+/* the owner tab says what it is */
+if(MODE==="owner"){const b=document.getElementById("modeBar");if(b)b.hidden=false;document.title="PlateWatch for restaurants";document.documentElement.classList.add("owner-tab")}
+document.addEventListener("click",e=>{if(e.target.closest("[data-owner-login]")){e.preventDefault();go("login","owner")}});
 /* the role comes from the API session; admin links only show for staff, and a signed-out admin leaves the page */
 const isAdmin=()=>!!S.user&&S.user.role==="admin";
 function syncAuthBtn(){
-  document.getElementById("authBtn").textContent=S.user?"My alerts":"Log in";
+  document.getElementById("authBtn").textContent=MODE==="owner"?(S.user?"Dashboard":"Owner login"):(S.user?"My alerts":"Log in");
   document.querySelectorAll("[data-staff]").forEach(el=>el.hidden=!isAdmin());
   if(!isAdmin()&&S.page&&S.page.p==="admin")go("home");
 }
@@ -145,7 +168,7 @@ const noResHTML=q=>`<div class="nores"><p><b>Nothing on record for “${esc(q)}�
   <form class="nr-form" hidden><div><label>Name<input class="input" name="nm" required minlength="2" maxlength="120" value="${esc(q)}"></label></div><div><label>Area<input class="input" name="ar" required minlength="2" maxlength="120" placeholder="e.g. Dadar West"></label></div><div><button class="pillbtn sm" type="submit">Send</button></div></form></div>`;
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-nr]");if(!b)return;
-  if(b.dataset.nr==="report"){RP.open({name:b.dataset.q});return}
+  if(b.dataset.nr==="report"){openReport(null,"",b.dataset.q);return}
   const f=b.closest(".nores").querySelector(".nr-form");f.hidden=!f.hidden;b.setAttribute("aria-expanded",String(!f.hidden));if(!f.hidden)f.querySelector("[name=ar]").focus();
 });
 /* "Tell us this place exists" goes to staff as a place suggestion */
@@ -180,13 +203,16 @@ document.querySelectorAll("[data-try]").forEach(b=>b.onclick=()=>{S.q=b.dataset.
 api("GET","/cities").then(d=>d.items.forEach(c=>{const o=document.createElement("option");o.value=c;o.textContent=c;document.getElementById("city").append(o)}),()=>{});
 const segDefs=[["","All"],["red","Suspended or revoked"],["amber","Improvement notice"],["green","Reinstated"],["grey","No official action"]];
 const verDefs=[["","All"],["verified","PlateWatch verified"],["claimed","Claimed"],["none","Not claimed yet"]];
-S.ver="";
+const licDefs=[["","All"],["active","Active on FSSAI"],["inactive","Inactive or not found"],["unchecked","Not checked yet"]];
+S.ver="";S.lic="";
 function renderSeg(){
   document.getElementById("seg").innerHTML=segDefs.map(([v,l])=>`<button type="button" data-v="${v}" aria-pressed="${S.type===v}">${v?`<span class="sdot sdot-${v}" aria-hidden="true"></span>`:""}${l}</button>`).join("");
   document.getElementById("segVer").innerHTML=verDefs.map(([v,l])=>`<button type="button" data-ver="${v}" aria-pressed="${S.ver===v}">${l}</button>`).join("");
+  document.getElementById("segLic").innerHTML=licDefs.map(([v,l])=>`<button type="button" data-lic="${v}" aria-pressed="${S.lic===v}">${l}</button>`).join("");
 }
 document.getElementById("seg").onclick=e=>{const b=e.target.closest("button");if(!b)return;S.type=b.dataset.v;renderSeg();applyFilters()};
 document.getElementById("segVer").onclick=e=>{const b=e.target.closest("button");if(!b)return;S.ver=b.dataset.ver;renderSeg();applyFilters()};
+document.getElementById("segLic").onclick=e=>{const b=e.target.closest("button");if(!b)return;S.lic=b.dataset.lic;renderSeg();applyFilters()};
 function applyFilters(){if(S.page.p==="tracker")MAP.refresh()}
 /* the Tracker is the map: filters, legend, then the map with its results panel */
 function renderTracker(){
@@ -200,9 +226,9 @@ document.getElementById("q").addEventListener("keydown",e=>{if(e.key==="Enter"&&
 document.getElementById("city").onchange=e=>{S.city=e.target.value;applyFilters()};
 document.getElementById("sort").onchange=e=>{S.sort=e.target.value;applyFilters()};
 
-/* report: every [data-bot] button opens the simulated WhatsApp chat */
+/* report: every [data-bot] button opens the "Write your Remark" form (the profile's buttons pass the restaurant) */
 const $=id=>document.getElementById(id);
-document.addEventListener("click",e=>{const b=e.target.closest("[data-bot]");if(!b)return;e.preventDefault();RP.open(b.dataset.botRid?{rid:+b.dataset.botRid}:{})});
+document.addEventListener("click",e=>{const b=e.target.closest("[data-bot]");if(!b)return;e.preventDefault();openReport(b.dataset.botRid?+b.dataset.botRid:null)});
 $("rfCopy").onclick=()=>{
   const mine=S.user?REPORTS.filter(x=>x.user===S.user.phone).sort((a,b)=>b.ts-a.ts)[0]:null;
   const t=RP.complaintText(mine||null);
@@ -224,7 +250,7 @@ const SIGNIN={
 };
 /* the API signed someone in: keep their details, then load their follows and watched areas */
 async function signedIn(user){
-  S.user={id:user.id,phone:localPhone(user.phone),name:user.name||"",wa:user.whatsappAlerts,role:user.role};
+  S.user={id:user.id,phone:localPhone(user.phone),name:user.name||"",wa:user.whatsappAlerts,role:user.role,owned:user.ownedRestaurantIds||[]};
   if(S.owner==null&&user.ownedRestaurantIds&&user.ownedRestaurantIds.length)S.owner=user.ownedRestaurantIds[0];
   RP.registerNumber(S.user.phone);syncAuthBtn();
   try{
@@ -246,16 +272,30 @@ async function addArea(area){
 
 /* login page: number and consent, then the code */
 let phone="",timer=null,consent=false,otpInfo=null,busy=false;
+const DINER_ART=document.getElementById("authArt").innerHTML;
+const OWNER_ART=`<div class="eyebrow" style="color:#9A9A9A">For restaurant owners</div>
+  <div><h2 class="h-big">Show diners your kitchen.</h2>
+  <ul style="margin-top:30px">
+    <li><b>→</b><span><b>Answer the checkup:</b> questions on food and kitchen hygiene.</span></li>
+    <li><b>→</b><span><b>Prove it with photos</b> of your kitchen. Approved photos appear in your Kitchen gallery.</span></li>
+    <li><b>→</b><span><b>Reply to reports</b> about your restaurant, next to the report.</span></li>
+  </ul></div>`;
+const isOwnerLogin=()=>S.page.p==="login"&&S.page.arg==="owner";
 function renderAuth(step){
   const P=document.getElementById("authPanel");clearInterval(timer);
+  const owner=isOwnerLogin();
+  document.getElementById("authArt").innerHTML=owner?OWNER_ART:DINER_ART;
   if(step==="phone"){
     const ok=v=>/^[6-9]\d{9}$/.test(v);
-    P.innerHTML=`<div class="eyebrow">Step 1 of 2</div><h2 class="h-big" style="margin-top:12px">Your mobile number</h2>
-    <p class="muted" style="margin-top:12px">We'll send a 6-digit code on WhatsApp or by SMS. Used only for alerts you choose.</p>
+    const head=owner?`<div class="eyebrow">Restaurant owner login · step 1 of 2</div><h2 class="h-big" style="margin-top:12px">Owner's mobile number</h2>
+    <p class="muted" style="margin-top:12px">The number you manage your restaurant with. We'll send a 6-digit code on WhatsApp or by SMS.</p>`
+    :`<div class="eyebrow">Step 1 of 2</div><h2 class="h-big" style="margin-top:12px">Your mobile number</h2>
+    <p class="muted" style="margin-top:12px">We'll send a 6-digit code on WhatsApp or by SMS. Used only for alerts you choose.</p>`;
+    P.innerHTML=`${head}
     <form id="pf"><div class="phonefield"><span>+91</span><input id="ph" inputmode="numeric" autocomplete="tel-national" maxlength="10" placeholder="98765 43210" aria-label="10-digit mobile number" value="${phone}"></div>
     <div id="perr"></div>
-    <label class="check" style="margin-top:22px"><input type="checkbox" id="lconsent" ${consent?"checked":""}><span>PlateWatch stores my number only to send alerts I choose. I can delete it anytime.</span></label>
-    <div class="row-actions"><button class="pillbtn" id="sendBtn" type="submit" ${ok(phone)&&consent?"":"disabled"}>Send code</button><span class="muted">Searching is free without an account.</span></div></form>`;
+    <label class="check" style="margin-top:22px"><input type="checkbox" id="lconsent" ${consent?"checked":""}><span>${owner?"PlateWatch stores this number to manage my restaurant's profile. I can delete it anytime.":"PlateWatch stores my number only to send alerts I choose. I can delete it anytime."}</span></label>
+    <div class="row-actions"><button class="pillbtn" id="sendBtn" type="submit" ${ok(phone)&&consent?"":"disabled"}>Send code</button><span class="muted">${owner?`Not an owner? <button class="x" type="button" data-user-tab>Log in as a user</button> (opens in a new tab)`:`Own a restaurant? <button class="x" type="button" data-owner-login>Restaurant owner login</button> (opens in a new tab)`}</span></div></form>`;
     const ph=document.getElementById("ph"),cb=document.getElementById("lconsent"),btn=document.getElementById("sendBtn");ph.focus();
     const sync=()=>{btn.disabled=busy||!(ok(ph.value)&&cb.checked)};
     ph.oninput=()=>{ph.value=ph.value.replace(/\D/g,"").slice(0,10);sync();document.getElementById("perr").innerHTML=""};
@@ -307,15 +347,44 @@ function renderAuth(step){
 /* no profile step: pre-fill the watched area from the place being followed, then return to where the user started */
 async function finishLogin(){
   const nx=S.after;S.after=null;
+  /* owners land on their dashboard, or on finding their restaurant to claim */
+  if(isOwnerLogin()){
+    if(S.owner!=null){toast("Welcome back");go("dash","overview")}
+    else{toast("You're in. Find your restaurant to claim it.");go("biz")}
+    return;
+  }
   if(nx&&nx.follow){
     await setFollow(nx.follow,true);
     const r=place(nx.follow);
     if(r&&!S.areas.some(a=>a.area.toLowerCase()===r.area.toLowerCase()))await addArea(r.area).catch(()=>{});
     toast("You're in. Following this place now.");go("detail",nx.follow);
   }
+  else if(nx&&nx.report){toast("You're in.");go(nx.back.p,nx.back.arg);openReport(nx.rid,nx.name,nx.q)}
   else if(nx==="admin"){toast("You're in.");go("admin")}
   else{toast("You're in. Alerts are on.");go("account")}
 }
+
+/* report from a profile: sign in first, then the "Write your Remark" form */
+/* one live camera for checkup evidence and report photos */
+const CAM=createCamera({esc,toast});
+const REMARK=createRemark({esc,toast,api,uploadFile,camera:CAM,limits:{day:1,week:5},owns:id=>!!S.user&&(S.user.owned||[]).includes(id)});
+/* id: a restaurant, or null to choose one in the form; q pre-fills that search */
+function openReport(id,name,q){
+  if(MODE==="owner"){openTab("user",id?"profile-"+id:"report");toast("Reports are sent from your user login, so PlateWatch opened in a new tab.");return}
+  if(!S.user){S.after={report:true,rid:id||null,name,q,back:{...S.page}};toast("Log in with your number to send a report");go("login");return}
+  if(id&&(S.user.owned||[]).includes(id)){toast("You manage this restaurant, so you can't report it.");return}
+  REMARK.open(id?{rid:id,name:name||(place(id)||{}).name||"This restaurant"}:{q:q||""});
+}
+
+/* a moderator asked for more: one more camera photo goes onto the report */
+document.addEventListener("click",e=>{
+  const b=e.target.closest("[data-addmore]");if(!b)return;
+  CAM.open(`More evidence for ${b.dataset.ref}`,async file=>{
+    toast("Uploading…");
+    try{const uploadId=await uploadFile(file,"report");await api("POST",`/reports/${b.dataset.addmore}/evidence`,{evidence:[{uploadId}]});toast("Added. A moderator will look again within 24 hours.");renderMyReports()}
+    catch(err){toast(err.message)}
+  });
+});
 
 /* account */
 function renderAccount(){
@@ -351,13 +420,13 @@ function myReportHTML(x){
   const steps=i<0?`<p class="myrep-dis">Couldn't be used: ${esc(x.rejectReason||"not substantiated after review")}.</p>`
     :`<ol class="rstep${x.share?"":" rstep-2"}" aria-label="Report status">${x.stages.map((st,k)=>`<li class="${k<i?"done":k===i?"now":""}"${k===i?' aria-current="step"':""}><span>${esc(st)}</span></li>`).join("")}</ol>
     ${!x.share?`<p class="myrep-dis">Kept private: used only to spot patterns, never shared with the restaurant or the regulator.</p>`:!x.evidence.some(k=>k!=="note")?`<p class="myrep-dis">No photo, video or bill, so this report can't be sent to the regulator.</p>`:""}
-    ${x.askMore?`<p class="myrep-dis">A moderator asked for more. Open your WhatsApp chat and tap “Add to ${esc(x.ref)}”.</p>`:""}`;
+    ${x.askMore?`<p class="myrep-dis">A moderator asked for more. <button class="x" type="button" data-addmore="${x.id}" data-ref="${esc(x.ref)}">Add a photo with the camera</button></p>`:""}`;
   return `<div class="myrep"><div class="myrep-top"><b>${esc(x.place)}</b><span class="myrep-ref">${esc(x.ref)}</span></div>
     <div class="muted">${esc(x.category)} · ${fmt(x.date)} · Evidence: ${esc(ev)}</div>${steps}</div>`;
 }
 async function renderMyReports(){
   const el=document.getElementById("myReports");
-  const chat=n=>`<p style="padding-top:14px"><button class="x" data-bot>${n?"Open my WhatsApp chat":"Report a problem on WhatsApp"}</button></p>`;
+  const chat=()=>`<p style="padding-top:14px"><button class="pillbtn out sm" type="button" data-bot>Write a report</button></p>`;
   if(!el.innerHTML)el.innerHTML=`<p class="muted" style="padding-top:14px">Loading…</p>`;
   let items;
   try{items=(await api("GET","/me/reports")).items}catch(e){el.innerHTML=`<p class="muted" style="padding-top:14px">${esc(e.message)}</p>`+chat(0);return}
@@ -425,9 +494,13 @@ const REQS=[
  ["o4","ops","Supplier bills and records are kept",1,0]
 ].map(([id,cat,text,w,crit])=>({id,cat,text,w,crit:!!crit}));
 const REQ=Object.fromEntries(REQS.map(r=>[r.id,r]));
+/* these categories take documents (PDF); every other requirement takes a live camera photo */
+const PDF_ONLY=new Set(["pest","docs"]);
 const daysAgo=d=>Math.round((TODAY-new Date(d))/864e5);
 const dISO=n=>{const t=new Date(TODAY);t.setDate(t.getDate()-n);return t.toISOString().slice(0,10)};
 const ago=d=>{const n=daysAgo(d);return n<=0?"today":n===1?"yesterday":n+" days ago"};
+/* how often a part of the checkup needs new evidence, in words */
+const every=d=>({7:"every week",14:"every 2 weeks",30:"every month",90:"every 3 months",180:"every 6 months",365:"every year"})[d]||`every ${d} days`;
 let EVID=1;
 const AI={
  s1:["✓ Separate shelves visible for raw and cooked items","✓ Containers appear labelled","⚠ One container on the top shelf may be uncovered"],
@@ -473,7 +546,7 @@ function addApprovedPhoto(rid,req,o){
 }
 const SCM=createSpotChecks({PROF,REQS,REQ,CAT,CATS,RP,esc,fmt,toast,aiFor,addEvidence:addApprovedPhoto,onChange:refreshReports});
 /* the tracker map; restaurants come from the API */
-const MAP=createMap({api,esc,fmt,st,go,filters:()=>({q:S.q,city:S.city,status:S.type,badge:S.ver,sort:S.sort}),noResults:noResHTML,remember});
+const MAP=createMap({api,esc,fmt,st,go,filters:()=>({q:S.q,city:S.city,status:S.type,badge:S.ver,licence:S.lic,sort:S.sort}),noResults:noResHTML,remember});
 /* PlateWatch's badge for a profile held here (the owner's dashboard, the illustrations), by the same rules as the API:
    verified needs every applicable requirement backed by current approved evidence, and nothing waiting for review */
 function verif(rid){
@@ -539,6 +612,29 @@ function galleryHTML(list){
       <figcaption><span class="gal-area">${esc(c.name)}</span><span class="gal-meta"><span class="gtag${p.source==="spot"?" gtag-spot":""}">${p.source==="spot"?"Spot check":"Checkup"}</span><span>${fmt(p.capturedOn)}</span></span></figcaption></figure>`).join("")}</div></section>`).join("")}</div>`;
 }
 let detailSeq=0;
+/* late evidence, said plainly: it no longer counts, so the score is lower */
+const fmtShort=s=>new Date(s).toLocaleDateString("en-IN",{day:"numeric",month:"short"});
+function overdueHTML(fr){
+  const late=fr.filter(x=>x.state==="expired");
+  if(!late.length)return "";
+  return `<div class="crit overdue"><b class="m">!</b><div><b>Evidence overdue</b><br>${late.map(x=>`${esc(x.name)}: new ${x.key==="pest"||x.key==="docs"?"PDF":"photos"} due ${every(x.everyDays)}, was due by ${fmt(x.dueOn)}`).map(t=>`<span>${t}</span>`).join("<br>")}<br><span class="muted">Late items don't count, so the score above is lower until the restaurant uploads new evidence.</span></div></div>`;
+}
+/* "3 days ago", "1 week ago" */
+function since(iso){const d=Math.floor((Date.now()-Date.parse(iso))/864e5);return d<=0?"today":d===1?"yesterday":d<7?d+" days ago":d<14?"1 week ago":Math.floor(d/7)+" weeks ago"}
+const photosHTML=(list,alt)=>list.length?`<div class="rep-photos">${list.map(u=>`<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="${alt}" loading="lazy"></a>`).join("")}</div>`:"";
+function proofHTML(p){
+  if(!p)return "";
+  return p.kind==="document"?`<a class="x rep-pdf" href="${esc(p.url)}" target="_blank" rel="noopener">View proof (PDF)</a>`:photosHTML([p.url],"Photo the restaurant took as proof");
+}
+/* a published report as diners see it: the remark, the food photo, the restaurant's checked action, and how old it is */
+function pubReportHTML(x){
+  return `<article class="rep rep-pub"><div class="top"><span class="tag tag-com">${esc(x.category)}</span><span>${esc(x.ref)}</span></div>
+    <p class="rep-text">${esc(x.text)}</p>
+    ${photosHTML(x.photos,"Food photo from the diner")}${!x.photos.length&&x.hasPhoto?`<p class="rep-note">Food photo checked by PlateWatch</p>`:""}
+    ${x.hasBill?`<p class="rep-note">✓ Bill checked by PlateWatch. It isn't shown, because bills can carry personal details.</p>`:""}
+    ${x.response?`<div class="resp resp-done"><span class="tag tag-self">Restaurant took action · ${fmt(x.response.date)} · proof checked by PlateWatch</span><div>${esc(x.response.text)}</div>${proofHTML(x.response.proof)}</div>`:""}
+    <div class="rep-foot">Reported ${since(x.createdAt)} · shown here until ${fmtShort(x.publicUntil)}</div></article>`;
+}
 async function renderDetail(id){
   const el=document.getElementById("detail"),my=++detailSeq,bt=backTarget(id);
   const back=()=>`<button class="back" id="back">← Back to ${esc(pageName(bt))}</button>`;
@@ -558,7 +654,10 @@ async function renderDetail(id){
   if(my!==detailSeq||S.page.p!=="detail"||S.page.arg!==id)return;
   remember([r]);
   const status=r.status||"none",f=S.follows.has(id),c=r.compliance;
-  const lic=status==="sus"?"Suspended":status==="rev"?"Revoked":"Active (as of last check)";
+  /* the licence: an FDA suspension or revocation first, otherwise what FSSAI's FoSCoS showed when staff last checked */
+  const FOSCOS={active:"Active on FSSAI's records",inactive:"Inactive or expired on FSSAI's records",not_found:"Not found on FSSAI's records"};
+  const lic=status==="sus"?"Suspended by FDA":status==="rev"?"Revoked by FDA":!r.licenceNumber?"Licence number not on record yet":r.licenceStatus?FOSCOS[r.licenceStatus]:"Not checked yet";
+  const licSub=[r.licenceNumber,r.licenceStatus&&r.licenceCheckedOn?"checked on FoSCoS "+fmt(r.licenceCheckedOn):""].filter(Boolean).join(" · ");
   const enf=["sus","rev","imp"].includes(status)?TYPES[status][0]+" since "+fmt(r.statusOn):"No current action listed";
   const stale=(TODAY-new Date(r.lastVerifiedOn))/864e5>30;
   let comp;
@@ -573,24 +672,26 @@ async function renderDetail(id){
       ${c.criticalOpen.length?`<div class="crit"><b class="m">!</b><div><b>Critical requirement${c.criticalOpen.length>1?"s":""} need${c.criticalOpen.length>1?"":"s"} attention</b><br>${c.criticalOpen.map(esc).join("; ")}</div></div>`:""}
       <div class="bars">${c.categories.map(x=>x.percent==null?"":`<div class="bar"><span>${esc(x.name)}</span><span class="t"><i style="width:${x.percent}%"></i></span><span class="p">${x.percent}%</span></div>`).join("")}</div>
       <h3 style="font-size:17px;margin-top:30px">Evidence freshness</h3>
-      <div class="fr">${c.freshness.map(x=>`<div><span class="fd fd-${x.state}"></span>${esc(x.name)}<span class="s">${x.state==="none"?"No evidence":x.state==="expired"?`${x.expiredItems} item${x.expiredItems>1?"s":""} expired`:"Updated "+ago(x.lastUpdated)}</span></div>`).join("")}</div>
+      ${overdueHTML(c.freshness)}
+      <div class="fr">${c.freshness.map(x=>`<div><span class="fd fd-${x.state}"></span><span class="fr-n">${esc(x.name)}<small>${every(x.everyDays)}</small></span><span class="s">${x.state==="none"?"No evidence":x.state==="expired"?`Overdue · was due ${fmtShort(x.dueOn)}`:"Updated "+ago(x.lastUpdated)+(x.dueOn?` · next due by ${fmtShort(x.dueOn)}`:"")}</span></div>`).join("")}</div>
       <div class="evc"><span><b>${c.evidenceCounts.total}</b> pieces of evidence</span><span><b>${c.evidenceCounts.photos}</b> photos</span><span><b>${c.evidenceCounts.videos}</b> videos</span><span><b>${c.evidenceCounts.documents}</b> documents</span><span>Last upload ${c.lastUpdated?ago(c.lastUpdated):"—"}</span></div>
       <p class="disc">PlateWatch's own compliance score, calculated from the restaurant's evidence against ${REQS.length} food-safety requirements. It is not an FSSAI hygiene rating or a government certificate.</p>
     </div>
-    ${r.gallery.length?`<div class="lane"><span class="tag tag-self">Restaurant-submitted · reviewed by PlateWatch</span><h2 class="h-mid">Kitchen gallery</h2><p class="gal-sub">Photos submitted by the restaurant, reviewed by PlateWatch.</p>${galleryHTML(r.gallery)}</div>`:""}`;
+    <div class="lane"><span class="tag tag-self">Restaurant-submitted · reviewed by PlateWatch</span><h2 class="h-mid">Kitchen gallery</h2><p class="gal-sub">Photos from the last 30 days that the restaurant uploaded to prove its checkup answers, approved by PlateWatch reviewers.</p>${r.gallery.length?galleryHTML(r.gallery):`<p class="muted gal-empty">No approved kitchen photos from the last 30 days.</p>`}</div>`;
   } else {
     comp=`<div class="lane"><span class="tag tag-self">Restaurant-submitted</span><div class="claimbox"><div><h2 class="h-mid">No compliance profile yet</h2><p class="muted" style="margin:6px 0 0">This restaurant hasn't claimed its page or submitted evidence.</p></div><button class="pillbtn out" id="claimThis">Own this place? Claim it</button></div></div>`;
   }
   const sources=r.history.filter(h=>h.sourceUrl);
   const url=location.origin+location.pathname+"#profile-"+id;
-  const wa="https://wa.me/?text="+encodeURIComponent(r.summary+" Check before you go: "+url);
+  /* owners can't report their own restaurant */
+  const mine=!!S.user&&(S.user.owned||[]).includes(id);
   el.innerHTML=`
   ${back()}
   <div class="sumline">${st(status)}<p class="sumline-t">${esc(r.summary)}</p></div>
   <div class="dhead">
-    <div><h1 class="h-big pnm">${dotHTML(r.dot)}<span>${esc(r.name)}</span></h1><div class="pnm-b">${badgeHTML(r.badge)}</div><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.category)}</div></div>
+    <div><h1 class="h-big pnm">${dotHTML(r.dot)}<span>${esc(r.name)}</span></h1><div class="pnm-b">${badgeHTML(r.badge)}</div><div class="w">${esc(r.area)}, ${esc(r.city)} · ${esc(r.category)}</div>${r.source==="osm"?`<div class="muted" style="font-size:12px;margin-top:6px">Name and location from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> (© OpenStreetMap contributors)</div>`:""}</div>
     <div class="sharebar">
-      <div class="sharebar-btns"><button class="pillbtn ${f?"out":""}" id="followBtn">${f?"✓ Following":"Follow for alerts"}</button><a class="pillbtn out" id="shareWa" href="${esc(wa)}" target="_blank" rel="noopener">Share on WhatsApp</a><button class="pillbtn out" id="copyLink" type="button">Copy link</button></div>
+      <div class="sharebar-btns"><button class="pillbtn ${f?"out":""}" id="followBtn">${f?"✓ Following":"Follow for alerts"}</button>${mine?"":`<button class="pillbtn out" type="button" data-report>Report</button>`}<button class="pillbtn out" id="copyLink" type="button">Copy link</button></div>
       <span class="shareurl" id="profUrl">${esc(url)}</span>
     </div>
   </div>
@@ -601,7 +702,7 @@ async function renderDetail(id){
         <span class="tag tag-off">Official record · from FDA / FSSAI sources</span>
         <h2 class="h-mid">Official status</h2>
         <div class="facts" style="margin-top:18px">
-          <div><div class="k">FSSAI licence</div><div class="v">${lic}</div><div class="muted" style="font-family:var(--mono);font-size:12px;margin-top:2px">${esc(r.licenceNumber)}</div></div>
+          <div><div class="k">FSSAI licence</div><div class="v">${lic}</div><div class="muted" style="font-family:var(--mono);font-size:12px;margin-top:2px">${esc(licSub)}</div></div>
           <div><div class="k">Government enforcement</div><div class="v">${enf}</div></div>
           <div><div class="k">FSSAI hygiene rating</div><div class="v">No official rating on record</div></div>
         </div>
@@ -614,10 +715,10 @@ async function renderDetail(id){
       <div class="lane">
         <span class="tag tag-com">Community reports · moderated, not independently verified</span>
         <h2 class="h-mid">Community reports</h2>
-        <div class="evc" style="margin-bottom:10px"><span><b>${r.reports.length}</b> published</span>${r.reportsAwaitingModeration?`<span><b>${r.reportsAwaitingModeration}</b> awaiting moderation (not shown)</span>`:""}</div>
-        ${r.reports.map(x=>`<div class="rep"><div class="top">${rsPill("accepted")}<span>${fmt(x.date)}</span>${x.hasPhoto?"<span>Photo attached</span>":""}</div><p>${esc(x.text)}</p>
-          ${x.response?`<div class="resp"><span class="tag tag-self">Restaurant response · ${fmt(x.response.date)}</span><div>${esc(x.response.text)}</div>${x.response.hasEvidence?`<div class="muted" style="font-size:12px;margin-top:4px">Evidence attached</div>`:""}</div>`:""}</div>`).join("")||`<p class="muted">No published reports.</p>`}
-        <div style="margin-top:20px"><button class="pillbtn out" type="button" data-bot data-bot-rid="${id}">Report a food-safety problem here</button></div>
+        <div class="evc" style="margin-bottom:10px"><span><b>${r.reports.length}</b> in the last 2 weeks</span>${r.reportsAwaitingModeration?`<span><b>${r.reportsAwaitingModeration}</b> being checked by PlateWatch (not shown yet)</span>`:""}</div>
+        ${r.reports.map(pubReportHTML).join("")||`<p class="muted">No reports in the last 2 weeks.</p>`}
+        <p class="muted" style="font-size:13px;margin-top:12px">PlateWatch checks every report before it appears here, and each one stays for 2 weeks.</p>
+        ${mine?`<p class="muted" style="margin-top:20px">You manage this restaurant, so you can't report it. Reply to reports from your dashboard.</p>`:`<div style="margin-top:20px"><button class="pillbtn out" type="button" data-report>Report a food-safety problem here</button></div>`}
       </div>
     </div>
     <div class="side" style="padding-top:34px">
@@ -633,6 +734,7 @@ async function renderDetail(id){
   </div>`;
   bindBack();
   document.getElementById("copyLink").onclick=()=>copyText(url,"Link copied",()=>selectNode(document.getElementById("profUrl")));
+  el.querySelectorAll("[data-report]").forEach(b=>b.onclick=()=>openReport(id,r.name));
   document.getElementById("followBtn").onclick=async()=>{
     if(!S.user){S.after={follow:id};toast("Log in with your number to get alerts");go("login");return}
     const on=!S.follows.has(id);
@@ -680,7 +782,7 @@ async function startClaim(rid){
    <p class="muted" style="margin-top:8px">Enter the FSSAI licence number on your licence and the owner's mobile. We'll send a code to confirm.</p>
    <form class="form" id="clf" style="margin-top:14px">
      <label for="cl-lic">FSSAI licence number</label><input class="input" id="cl-lic" inputmode="numeric" maxlength="14" required placeholder="14 digits" style="font-family:var(--mono)" aria-describedby="cl-lic-h">
-     <p class="muted" id="cl-lic-h" style="font-size:13px;margin:-4px 0 4px">The 14-digit number printed on your FSSAI licence or registration certificate.</p>
+     <p class="muted" id="cl-lic-h" style="font-size:13px;margin:-4px 0 4px">${r.lic?"The 14-digit number printed on your FSSAI licence or registration certificate.":"We don't have this restaurant's licence yet. Enter the 14-digit number on your FSSAI certificate; our team checks it on FSSAI's FoSCoS."}</p>
      <label for="cl-ph">Owner's mobile</label><input class="input" id="cl-ph" inputmode="numeric" maxlength="10" required placeholder="10 digits" style="font-family:var(--mono)" value="${S.user?S.user.phone:""}">
      <p class="muted" style="font-size:13px;margin:-4px 0 4px">PlateWatch stores this number to manage your restaurant's profile. You can delete it anytime.</p>
      <div id="clerr"></div>
@@ -690,6 +792,7 @@ async function startClaim(rid){
   const claim=async errEl=>{
     try{
       const res=await api("POST","/owner/claims",{restaurantId:rid,licenceNumber:lic});
+      S.user.owned=[...new Set([...(S.user.owned||[]),rid])];
       if(PROF[rid])PROF[rid].owner=fmtPhone(S.user.phone);
       else PROF[rid]={owner:fmtPhone(S.user.phone),level:"self",verifiedOn:null,adminNote:"",resp:{},ev:{},journey:[]};
       const back=res.existing||existing;
@@ -701,7 +804,8 @@ async function startClaim(rid){
     const err=document.getElementById("clerr"),btn=document.getElementById("clSend");
     if(!/^\d{14}$/.test(lic)){err.innerHTML=errHTML("Enter the 14-digit licence number.");return}
     /* checked here too, so a typo doesn't cost a code; the API checks it again */
-    if(lic!==r.lic){err.innerHTML=errHTML("That licence number doesn't match our records for this restaurant.");return}
+    /* no licence on record (added from OpenStreetMap): the owner's is saved and our team checks it on FoSCoS */
+    if(r.lic&&lic!==r.lic){err.innerHTML=errHTML("That licence number doesn't match our records for this restaurant.");return}
     if(!/^[6-9]\d{9}$/.test(ph)){err.innerHTML=errHTML("Enter a 10-digit mobile number starting with 6–9.");return}
     busy=true;btn.disabled=true;err.innerHTML="";
     if(S.user&&S.user.phone===ph){await claim(err);busy=false;btn.disabled=false;return}
@@ -770,11 +874,11 @@ function expiringSoon(rid){
 function nextBestHTML(sc,rid){
   const top=nextBest(sc),exp=rid!=null?expiringSoon(rid):[];if(!top.length&&!exp.length)return "";
   return `<div class="nba"><div class="nba-h"><h3>Do these next</h3><span class="muted">Highest impact on your score</span></div>
-    <ol>${top.map(m=>`<li><div class="nba-t"><span>${esc(m.r.text)}</span><span class="nba-m">${m.r.crit?"<b>Critical</b> · ":""}Weight ${m.r.w} · ${CAT[m.r.cat].name} · ${m.why}</span></div><button class="pillbtn out sm" data-jump="${m.r.id}">Fix this</button></li>`).join("")}${exp.map(x=>`<li><div class="nba-t"><span>${esc(x.r.text)}</span><span class="nba-m"><b>${x.left===0?"Expires today":`Expires in ${x.left} day${x.left===1?"":"s"}`}</b> · ${CAT[x.r.cat].name} · evidence valid ${CAT[x.r.cat].expiry} days</span></div><button class="pillbtn out sm" data-jump="${x.r.id}">Refresh</button></li>`).join("")}</ol></div>`;
+    <ol>${top.map(m=>`<li><div class="nba-t"><span>${esc(m.r.text)}</span><span class="nba-m">${m.r.crit?"<b>Critical</b> · ":""}Weight ${m.r.w} · ${CAT[m.r.cat].name} · ${m.why}</span></div><button class="pillbtn out sm" data-jump="${m.r.id}">Fix this</button></li>`).join("")}${exp.map(x=>`<li><div class="nba-t"><span>${esc(x.r.text)}</span><span class="nba-m"><b>${x.left===0?"Expires today":`Expires in ${x.left} day${x.left===1?"":"s"}`}</b> · ${CAT[x.r.cat].name} · new ${PDF_ONLY.has(x.r.cat)?"PDF":"photo"} needed ${every(CAT[x.r.cat].expiry)}</span></div><button class="pillbtn out sm" data-jump="${x.r.id}">Refresh</button></li>`).join("")}</ol></div>`;
 }
 function renderDash(tab){
   const rid=S.owner,p=PROF[rid],r=p.r,sc=scoreOf(rid),ec=evCounts(rid);
-  const nrep=(S.ownerReports||[]).filter(x=>!x.response).length;
+  const nrep=(S.ownerReports||[]).filter(x=>!x.response||x.response.status==="rejected").length;
   const tabs=[["overview","Overview"],["checkup","Food Safety Checkup"],["reports","Reports"+(nrep?`<span class="n">${nrep}</span>`:"")],["journey","Journey"],["qr","QR code"]];
   let body="";
   if(tab==="overview"){
@@ -803,30 +907,29 @@ function renderDash(tab){
       <h3 style="font-size:20px;font-weight:700;font-stretch:108%;margin:34px 0 12px">Spot checks</h3>
       ${SCM.historyHTML(rid)}
     </div></div>
-    <section class="sc-preview"><span class="tag tag-self">What diners see</span><h2 class="h-mid">Your kitchen gallery</h2><p class="gal-sub">${p.publicGallery?"Only photos our reviewers approved. Spot-check photos are tagged.":"Photos our reviewers approve collect here. Diners will see them once photo publishing is switched on, after faces can be blurred automatically."}</p>${SCM.galleryHTML(rid)}</section>`;
+    <section class="sc-preview"><span class="tag tag-self">What diners see</span><h2 class="h-mid">Your kitchen gallery</h2><p class="gal-sub">${p.publicGallery?"Photos our reviewers approved in the last 30 days. Older ones drop out, so keep uploading. Spot-check photos are tagged.":"Photos our reviewers approve collect here. Diners will see them once photo publishing is switched on, after faces can be blurred automatically."}</p>${SCM.galleryHTML(rid)}</section>`;
   }
   if(tab==="checkup"){
     body=`<div class="stick"><span>Compliance score now <b>${sc.overall}/100</b>${paused(rid)?" (paused publicly)":""} · ${sc.done}/${sc.tot} met${sc.unanswered?` · ${sc.unanswered} unanswered`:""}</span><span class="muted" style="font-size:13px">Based on public FSSAI hygiene parameters. Not an official FSSAI audit.</span></div>
-    <div style="padding-top:24px">${nextBestHTML(sc,rid)}${progHTML(sc.done,sc.tot)}</div>
-    ${CATS.map(c=>{const reqs=REQS.filter(q=>q.cat===c.k);const x=sc.cats[c.k];return `<details class="cat" data-cat="${c.k}" ${S.openCats.has(c.k)?"open":""}><summary><h3>${c.name}</h3><span class="catprog"><span class="prog-t" aria-hidden="true"><i style="width:${x.tot?Math.round(x.done/x.tot*100):0}%"></i></span><span>${x.done} of ${x.tot}</span></span><span class="p">${x.pct==null?"N/A":x.pct+"%"} · evidence valid ${c.expiry} days</span><span class="ch" aria-hidden="true">+</span></summary>
+    <div style="padding-top:24px"><p class="muted" style="margin:0 0 18px;max-width:70ch">Answer each question about your food and kitchen hygiene, and prove every <b>Yes</b>. Kitchen, storage, personal hygiene, cleaning and operations need a <b>photo taken with your camera</b> right then. Pest control and documentation need a <b>PDF</b> (contract, certificate or record). Our reviewers check every upload within 24 hours. Once they approve a photo, it appears in your public <b>Kitchen gallery</b> for 30 days. Photos showing people's faces are never shown to diners.</p>
+    <div class="sched"><b>Upload new evidence on time.</b> Kitchen hygiene, food storage and cleaning: photos every 2 weeks. Personal hygiene: every week. Operational safety: every month. Pest control: a PDF every 6 months. When something is late it stops counting, your score goes down, and your public profile shows it as overdue.<span>Uploaded the wrong file? Use <b>Remove</b> on it. Photos are deleted after 4 months and PDFs after 2 years.</span></div>${nextBestHTML(sc,rid)}${progHTML(sc.done,sc.tot)}</div>
+    ${CATS.map(c=>{const reqs=REQS.filter(q=>q.cat===c.k);const x=sc.cats[c.k];return `<details class="cat" data-cat="${c.k}" ${S.openCats.has(c.k)?"open":""}><summary><h3>${c.name}</h3><span class="catprog"><span class="prog-t" aria-hidden="true"><i style="width:${x.tot?Math.round(x.done/x.tot*100):0}%"></i></span><span>${x.done} of ${x.tot}</span></span><span class="p">${x.pct==null?"N/A":x.pct+"%"} · ${PDF_ONLY.has(c.k)?"PDF":"photos"} ${every(c.expiry)}</span><span class="ch" aria-hidden="true">+</span></summary>
       ${reqs.map(q=>{const a=p.resp[q.id];const evs=p.ev[q.id]||[];return `<div class="req" id="req-${q.id}">
         <div><div class="q">${esc(q.text)}</div><div class="qm">${q.crit?'<span class="c">■ Critical</span>':""}<span>Weight ${q.w}</span>${a==="yes"&&!currentEv(rid,q.id).length?"<span class='c'>Evidence needed</span>":""}</div></div>
         <div class="ans" role="group" aria-label="Answer">${["yes","no","na"].map(v=>`<button data-ans="${v}" data-q="${q.id}" aria-pressed="${a===v}">${v==="na"?"N/A":v[0].toUpperCase()+v.slice(1)}</button>`).join("")}</div>
-        ${evs.map(e=>{const exp=daysAgo(e.date)>c.expiry&&e.status!=="rejected";const stt=exp?"expired":e.status;const lab={verified:"Approved",submitted:"Submitted",rejected:"Rejected",more:"More needed",expired:"Expired"}[stt];return `<div class="ev"><div class="th">${e.url?`<img src="${e.url}" alt="">`:e.type.toUpperCase()}</div><div><div class="nm">${esc(e.name)}<span class="evs evs-${stt}">${lab}</span></div><div class="mt">${e.type} · uploaded ${ago(e.date)}${e.flag?" · flagged by reviewer":""}</div>${e.note?`<div class="mt">Note: ${esc(e.note)}</div>`:""}
-          ${e.ai?`<div class="ai"><span class="tag tag-plat">AI-assisted observation · not a certification</span>${e.ai.map(o=>`<div>${esc(o)}</div>`).join("")}<div class="muted">Status: ${e.status==="verified"?"Confirmed by reviewer":"Needs human review"}</div></div>`:""}</div></div>`}).join("")}
-        <div class="evrow"><label class="upl">+ Add photo, video or PDF<input type="file" accept="image/*,video/*,.pdf" data-up="${q.id}"></label></div>
+        ${evs.map(e=>{const exp=daysAgo(e.date)>c.expiry&&e.status!=="rejected";const stt=exp?"expired":e.status;const lab={verified:"Approved",submitted:"Submitted",rejected:"Rejected",more:"More needed",expired:"Expired"}[stt];return `<div class="ev"><div class="th">${e.url?`<img src="${e.url}" alt="">`:e.type.toUpperCase()}</div><div><div class="nm">${esc(e.name)}<span class="evs evs-${stt}">${lab}</span></div><div class="mt">${e.type} · uploaded ${ago(e.date)}${e.status==="submitted"?" · a reviewer checks it within 24 hours":""}${e.flag?" · flagged by reviewer":""}</div>${e.note?`<div class="mt">Note: ${esc(e.note)}</div>`:""}
+          ${e.ai?`<div class="ai"><span class="tag tag-plat">AI-assisted observation · not a certification</span>${e.ai.map(o=>`<div>${esc(o)}</div>`).join("")}<div class="muted">Status: ${e.status==="verified"?"Confirmed by reviewer":"Needs human review"}</div></div>`:""}</div>${e.id?`<button type="button" class="evrm" data-rm="${e.id}" data-q="${q.id}" aria-label="Remove ${esc(e.name)}">Remove</button>`:""}</div>`}).join("")}
+        <div class="evrow">${PDF_ONLY.has(q.cat)
+          ?`<label class="upl">+ Add PDF<input type="file" accept="application/pdf,.pdf" data-up="${q.id}"></label><span class="muted" style="font-size:13px">PDF only: the contract, certificate or record.</span>`
+          :`<button type="button" class="upl" data-cam="${q.id}">Take photo with camera</button><span class="muted" style="font-size:13px">Live camera only, so the photo shows your kitchen today. Keep people's faces out of the frame.</span>`}</div>
         <input class="noteinput" placeholder="Add a note for the reviewer (optional)" data-note="${q.id}" aria-label="Note for ${esc(q.text)}">
       </div>`}).join("")}</details>`}).join("")}
     <div style="padding-block:34px 70px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">${p.level==="self"?`<button class="pillbtn" id="reqVer2" ${sc.unanswered?"disabled":""}>Request verification</button>`:lvlFor(rid)}<span class="muted">${sc.unanswered?sc.unanswered+" requirement(s) still unanswered":"All requirements answered"}</span></div>`;
   }
   if(tab==="reports"){
     const reps=S.ownerReports||[];
-    body=`<div style="padding-block:30px 70px;max-width:760px"><p class="muted" style="margin-top:0">Reports show here once our team has accepted them and the reporter agreed to share them. Your response is shown next to the report.</p>
-    ${reps.map(x=>`<div class="rep"><div class="top">${rsPill("accepted")}<span>${fmt(x.date)}</span>${x.evidence.includes("photo")?"<span>Photo attached</span>":""}${x.flagged?"<span>You flagged this as incorrect</span>":""}</div><p>${esc(x.text)}</p>
-      ${x.response?`<div class="resp"><span class="tag tag-self">Your response · ${fmt(x.response.date)}</span><div>${esc(x.response.text)}</div>${x.response.hasEvidence?`<div class="muted" style="font-size:12px;margin-top:4px">Evidence attached</div>`:""}</div>`:
-      `<form class="form" data-resp="${x.id}" style="margin-top:14px"><label for="rsp-${x.id}">Your response</label><textarea class="input" id="rsp-${x.id}" rows="2" required minlength="5" maxlength="1000" placeholder="e.g. Pest-control treatment done on 18 Sep, certificate attached."></textarea>
-        <label class="upl" style="width:fit-content">+ Attach evidence<input type="file" id="rspf-${x.id}" accept="image/*,video/*,.pdf"></label>
-        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center"><button class="pillbtn sm" type="submit">Post response</button>${x.flagged?"":`<button class="x" type="button" data-flag="${x.id}">Report incorrect information</button>`}</div></form>`}</div>`).join("")||`<p class="muted">No reports yet.</p>`}</div>`;
+    body=`<div style="padding-block:30px 70px;max-width:760px"><p class="muted" style="margin-top:0">A diner's report appears here after PlateWatch checks and accepts it (within 24 hours), if the diner agreed to share it. It's on your public profile for 2 weeks. Fixed the problem? Use <b>Mark as resolved</b> with proof: a photo taken now, or a PDF such as a pest-control certificate. We check the proof within 24 hours, then it shows next to the report.</p>
+    ${reps.map(ownerReportHTML).join("")||`<p class="muted">No reports yet.</p>`}</div>`;
   }
   if(tab==="journey"){
     body=`<div style="padding-block:30px 70px;max-width:760px"><span class="tag tag-self">Your score over time</span>${journeySVG(rid)}${journeyList(rid)}
@@ -858,7 +961,8 @@ document.getElementById("dash").addEventListener("click",e=>{
   const rid=S.owner,p=PROF[rid];
   const t=e.target.closest("[data-tab]");if(t){renderDash(t.dataset.tab);window.scrollTo(0,0);return}
   if(e.target.id==="viewPub"){go("detail",rid);return}
-  if(e.target.id==="ownOut"){S.owner=null;toast("Signed out of dashboard");go("biz");return}
+  if(e.target.id==="ownOut"){
+    api("POST","/auth/logout").catch(()=>{}).then(()=>{signedOut();toast("Signed out of the dashboard");go("login","owner")});return}
   /* answers show at once and are saved in the background; a failure puts the old answer back */
   const a=e.target.closest("[data-ans]");if(a){const q=a.dataset.q,ans=a.dataset.ans,prev=p.resp[q];p.resp[q]=ans;keepOpen();renderDash("checkup");
     api("PUT",`/owner/restaurants/${rid}/answers/${q}`,{answer:ans}).catch(err=>{if(prev)p.resp[q]=prev;else delete p.resp[q];toast(err.message);keepOpen();renderDash("checkup")});return}
@@ -867,6 +971,59 @@ document.getElementById("dash").addEventListener("click",e=>{
     api("POST",`/owner/restaurants/${rid}/reports/${fl.dataset.flag}/flag`).then(()=>{toast("Flagged for our team to re-check");return reloadDash("reports")},err=>{fl.disabled=false;toast(err.message)});return}
   const sch=e.target.closest("[data-sc-chat]");if(sch){SCM.openChat(+sch.dataset.scChat);return}
 });
+/* a report in the owner's Reports tab, with "Mark as resolved" */
+function ownerReportHTML(x){
+  const r=x.response,open=S.rsv&&S.rsv.id===x.id;
+  let res="";
+  if(r&&r.status==="pending")res=`<div class="resp"><span class="tag tag-self">Sent to PlateWatch · ${fmt(r.date)}</span><div>${esc(r.text)}</div>${proofHTML(r.proof)}<div class="muted" style="font-size:12px;margin-top:6px">We check your proof within 24 hours. Then it shows next to the report on your public profile.</div></div>`;
+  if(r&&r.status==="approved")res=`<div class="resp resp-done"><span class="tag tag-self">Action taken · ${fmt(r.date)} · checked by PlateWatch</span><div>${esc(r.text)}</div>${proofHTML(r.proof)}</div>`;
+  if(r&&r.status==="rejected")res=`<div class="resp resp-no"><b>PlateWatch couldn't accept your proof:</b> ${esc(r.reviewNote||"")}<div class="muted" style="font-size:12px;margin-top:4px">Send new proof below.</div></div>`;
+  const canResolve=!r||r.status==="rejected";
+  const form=open?`<div class="resolve">
+      <label for="rsvText">What did you do about it?</label>
+      <textarea class="input" id="rsvText" rows="3" maxlength="1000" placeholder="e.g. Pest-control treatment done on 18 Sep; certificate attached.">${esc(S.rsv.text)}</textarea>
+      <div class="resolve-proof"><b>Proof</b>${S.rsv.file?`<span class="resolve-file">${S.rsv.kind==="photo"?`<img src="${S.rsv.url}" alt="Your proof photo">`:`<span class="th">PDF</span>`}${esc(S.rsv.file.name)}</span>`:`<span class="muted">A photo taken now with your camera, or a PDF.</span>`}
+        <span class="resolve-btns"><button type="button" class="upl" data-rsv-cam>${S.rsv.kind==="photo"?"Retake photo":"Take photo with camera"}</button><label class="upl">${S.rsv.kind==="document"?"Choose another PDF":"Add PDF"}<input type="file" accept="application/pdf,.pdf" data-rsv-pdf></label></span></div>
+      <div id="rsvErr" role="alert"></div>
+      <div class="resolve-acts"><button type="button" class="pillbtn sm" data-rsv-send>Send to PlateWatch</button><button type="button" class="x" data-rsv-cancel>Cancel</button></div></div>`
+    :canResolve?`<div class="resolve-acts"><button type="button" class="pillbtn sm" data-resolve="${x.id}">Mark as resolved</button>${x.flagged?"":`<button class="x" type="button" data-flag="${x.id}">Report incorrect information</button>`}</div>`:"";
+  return `<article class="rep" id="orep-${x.id}"><div class="top">${rsPill("accepted")}<span>${esc(x.category)}</span><span>${esc(x.ref)}</span>${x.flagged?"<span>You flagged this as incorrect</span>":""}</div>
+    <p class="rep-text">${esc(x.text)}</p>${photosHTML(x.photos,"Food photo from the diner")}
+    <div class="rep-foot">Reported ${since(x.createdAt)} · ${x.public?`on your public profile until ${fmtShort(x.publicUntil)}`:"no longer on your public profile"}</div>
+    ${res}${form}</article>`;
+}
+/* "Mark as resolved": a comment and proof, sent to PlateWatch */
+document.getElementById("dash").addEventListener("click",async e=>{
+  const t=e.target;
+  const open=t.closest("[data-resolve]");
+  if(open){S.rsv={id:+open.dataset.resolve,text:"",file:null,kind:null,url:null};renderDash("reports");document.getElementById("rsvText").focus();return}
+  if(!S.rsv)return;
+  if(t.closest("[data-rsv-cancel]")){if(S.rsv.url)URL.revokeObjectURL(S.rsv.url);S.rsv=null;renderDash("reports");return}
+  if(t.closest("[data-rsv-cam]")){
+    const x=(S.ownerReports||[]).find(r=>r.id===S.rsv.id);
+    CAM.open(`Proof for ${x?x.ref:"the report"}: photograph what you fixed`,file=>{if(!S.rsv)return;if(S.rsv.url)URL.revokeObjectURL(S.rsv.url);Object.assign(S.rsv,{file,kind:"photo",url:URL.createObjectURL(file)});renderDash("reports")});
+    return}
+  const send=t.closest("[data-rsv-send]");
+  if(send){
+    const err=document.getElementById("rsvErr"),text=S.rsv.text.trim();
+    const why=text.length<5?"Say what you did, in a few words.":!S.rsv.file?"Add proof: take a photo or add a PDF.":"";
+    if(why){err.innerHTML=errHTML(why);return}
+    send.disabled=true;send.textContent="Sending…";
+    try{
+      const uploadId=await uploadFile(S.rsv.file,"response");
+      await api("POST",`/owner/restaurants/${S.owner}/reports/${S.rsv.id}/response`,{text,uploadId});
+      if(S.rsv.url)URL.revokeObjectURL(S.rsv.url);S.rsv=null;
+      toast("Sent. PlateWatch checks your proof within 24 hours.");await reloadDash("reports");
+    }catch(x){err.innerHTML=errHTML(x.message);send.disabled=false;send.textContent="Send to PlateWatch"}
+  }
+});
+document.getElementById("dash").addEventListener("input",e=>{if(e.target.id==="rsvText"&&S.rsv)S.rsv.text=e.target.value});
+document.getElementById("dash").addEventListener("change",e=>{
+  const f=e.target.closest("[data-rsv-pdf]");if(!f||!S.rsv||!f.files[0])return;
+  const file=f.files[0];
+  if(file.type!=="application/pdf"&&!/\.pdf$/i.test(file.name)){toast("Choose a PDF file.");f.value="";return}
+  if(S.rsv.url)URL.revokeObjectURL(S.rsv.url);Object.assign(S.rsv,{file,kind:"document",url:null});renderDash("reports");
+});
 function keepOpen(){S.openCats=new Set([...document.querySelectorAll("details.cat[open]")].map(d=>d.dataset.cat))}
 document.getElementById("dash").addEventListener("toggle",e=>{if(e.target.matches&&e.target.matches("details.cat"))keepOpen()},true);
 document.getElementById("dash").addEventListener("change",e=>{
@@ -874,26 +1031,34 @@ document.getElementById("dash").addEventListener("change",e=>{
   const sci=e.target.closest("[data-sc]");
   if(sci&&sci.files[0]){const r=SCM.addPhoto(+sci.dataset.sc,sci.dataset.scItem,sci.files[0]);toast(r&&r.complete?(r.check.status==="answered"?"Spot check answered on time":"Spot check answered late"):"Photo added");renderDash(S.dashTab||"overview");return}
   const up=e.target.closest("[data-up]");
-  /* upload to storage, attach it to the requirement, then re-read the checkup; a reviewer sees it in Admin → Evidence */
-  if(up&&up.files[0]){const f=up.files[0],q=up.dataset.up;
-    const noteEl=document.querySelector(`[data-note="${q}"]`),note=noteEl?noteEl.value.trim():"";
-    up.disabled=true;toast("Uploading…");
-    (async()=>{
-      try{const uploadId=await uploadFile(f,"evidence");await api("POST",`/owner/restaurants/${rid}/evidence`,{requirementId:q,uploadId,...(note?{note}:{})});toast("Evidence submitted. A reviewer will check it.")}
-      catch(err){toast(err.message)}
-      keepOpen();await reloadDash("checkup");const el=document.getElementById("req-"+q);if(el)el.scrollIntoView({block:"center"});
-    })();
+  if(up&&up.files[0]){
+    const f=up.files[0];
+    if(!/\.pdf$/i.test(f.name)&&f.type!=="application/pdf"){toast("Choose a PDF file.");up.value="";return}
+    up.disabled=true;submitEvidence(up.dataset.up,f);
   }
 });
-document.getElementById("dash").addEventListener("submit",async e=>{
-  const f=e.target.closest("[data-resp]");if(!f)return;e.preventDefault();
-  const id=+f.dataset.resp,file=document.getElementById("rspf-"+id).files[0],text=document.getElementById("rsp-"+id).value.trim();
-  const btn=f.querySelector("button[type=submit]");btn.disabled=true;
-  try{
-    const uploadId=file?await uploadFile(file,"response"):null;
-    await api("POST",`/owner/restaurants/${S.owner}/reports/${id}/response`,{text,...(uploadId?{uploadId}:{})});
-    toast("Response posted. It shows next to the report.");await reloadDash("reports");
-  }catch(err){toast(err.message);btn.disabled=false}
+/* upload to storage, attach it to the requirement, then re-read the checkup; a reviewer sees it in Admin → Evidence */
+async function submitEvidence(q,f){
+  const rid=S.owner,noteEl=document.querySelector(`[data-note="${q}"]`),note=noteEl?noteEl.value.trim():"";
+  toast("Uploading…");
+  try{const uploadId=await uploadFile(f,"evidence");await api("POST",`/owner/restaurants/${rid}/evidence`,{requirementId:q,uploadId,...(note?{note}:{})});toast("Evidence submitted. A reviewer will check it.")}
+  catch(err){toast(err.message)}
+  keepOpen();await reloadDash("checkup");const el=document.getElementById("req-"+q);if(el)el.scrollIntoView({block:"center"});
+}
+/* the live camera: kitchen photos are taken on the spot, never picked from the gallery */
+/* uploaded the wrong file: remove it from the checkup, the review queue and the gallery */
+document.getElementById("dash").addEventListener("click",async e=>{
+  const b=e.target.closest("[data-rm]");if(!b)return;
+  if(!confirm("Remove this file? It stops counting towards your score and is deleted. This can't be undone."))return;
+  b.disabled=true;
+  try{await api("DELETE",`/owner/restaurants/${S.owner}/evidence/${b.dataset.rm}`);toast("Removed")}
+  catch(err){toast(err.message);b.disabled=false;return}
+  keepOpen();await reloadDash("checkup");const el=document.getElementById("req-"+b.dataset.q);if(el)el.scrollIntoView({block:"center"});
+});
+document.getElementById("dash").addEventListener("click",e=>{
+  const b=e.target.closest("[data-cam]");if(!b)return;
+  const q=b.dataset.cam;
+  CAM.open(REQ[q].text,file=>submitEvidence(q,file));
 });
 
 /* ---------- ADMIN (staff only; everything comes from the API) ---------- */

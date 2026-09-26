@@ -3,7 +3,7 @@ import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { evidence } from "../src/db/schema.js";
 import { REQUIREMENTS } from "../src/db/sample-data.js";
-import { jpegWithGps, setupApp, type T } from "./helpers.js";
+import { jpegWithGps, samplePdf, setupApp, type T } from "./helpers.js";
 
 let t: T;
 let owner: string, stranger: string, admin: string;
@@ -12,16 +12,20 @@ const GREEN_LEAF = { id: 3, lic: "11525017000418" };
 
 beforeAll(async () => {
   t = await setupApp({ gallery: true });
-  owner = await t.login("9811100001");
-  stranger = await t.login("9811100002");
+  owner = await t.login("9811100001", { owner: true });
+  stranger = await t.login("9811100002", { owner: true });
   admin = await t.login("9811100003", { admin: true });
 });
 afterAll(async () => t.close());
 
 const claim = (cookie: string, restaurantId: number, licenceNumber: string) => t.call("POST", "/api/owner/claims", { cookie, body: { restaurantId, licenceNumber } });
 
+/* pest control (p…) and documentation (d…) take a PDF; everything else a photo */
 async function submitEvidence(cookie: string, rid: number, requirementId: string) {
-  const { uploadId } = await t.upload(cookie, "evidence", await jpegWithGps(), "image/jpeg", `${requirementId}.jpg`);
+  const pdf = /^[pd]/.test(requirementId);
+  const { uploadId } = pdf
+    ? await t.upload(cookie, "evidence", samplePdf(), "application/pdf", `${requirementId}.pdf`)
+    : await t.upload(cookie, "evidence", await jpegWithGps(), "image/jpeg", `${requirementId}.jpg`);
   return t.call("POST", `/api/owner/restaurants/${rid}/evidence`, { cookie, body: { requirementId, uploadId } });
 }
 
@@ -70,6 +74,20 @@ describe("uploads", () => {
     const r = await t.call("POST", `/api/owner/restaurants/${HARBOUR.id}/evidence`, { cookie: owner, body: { requirementId: "k2", uploadId } });
     expect(r.statusCode).toBe(400);
     expect(r.json().details.code).toBe("UPLOAD_BAD_TYPE");
+  });
+
+  it("takes only PDFs for pest control and documentation, and only photos elsewhere", async () => {
+    const attach = async (requirementId: string, body: Buffer, type: string) => {
+      const { uploadId } = await t.upload(owner, "evidence", body, type);
+      return t.call("POST", `/api/owner/restaurants/${HARBOUR.id}/evidence`, { cookie: owner, body: { requirementId, uploadId } });
+    };
+    const photoForPest = await attach("p2", await jpegWithGps(), "image/jpeg");
+    expect(photoForPest.statusCode).toBe(400);
+    expect(photoForPest.json().message).toMatch(/need a PDF/);
+    expect((await attach("d1", await jpegWithGps(), "image/jpeg")).statusCode).toBe(400);
+    const pdfForKitchen = await attach("k4", samplePdf(), "application/pdf");
+    expect(pdfForKitchen.json().message).toMatch(/needs a photo/);
+    expect((await attach("k4", Buffer.from("00000018667479706d703432", "hex"), "video/mp4")).statusCode).toBe(400);
   });
 
   it("refuses unsupported types and oversize files before any upload", async () => {
@@ -175,13 +193,13 @@ describe("checkup, score and verification", () => {
     await submitEvidence(owner, HARBOUR.id, "k1");
     const [latest] = (await t.call("GET", "/api/admin/evidence?filter=pending", { cookie: admin })).json().items;
     const d = (await t.call("GET", `/api/admin/evidence/${latest.id}`, { cookie: admin })).json();
-    expect(d).toMatchObject({ kind: "photo", status: "submitted", expiryDays: 30, restaurantScore: { total: 27 }, submittedBy: "+91 98111 00001" });
+    expect(d).toMatchObject({ kind: "photo", status: "submitted", expiryDays: 14, restaurantScore: { total: 27 }, submittedBy: "+91 98111 00001" });
     expect(d.history.length).toBeGreaterThanOrEqual(2);
     expect(d.url).toMatch(/^\/api\/dev\/storage\//);
     expect((await t.call("GET", `/api/admin/evidence/${latest.id}`, { cookie: owner })).statusCode).toBe(403);
     expect((await t.call("PATCH", `/api/admin/evidence/${latest.id}`, { cookie: admin, body: { reviewNote: "Corner is dark", flagged: true } })).statusCode).toBe(204);
     expect((await t.call("GET", `/api/admin/evidence/${latest.id}`, { cookie: admin })).json()).toMatchObject({ reviewNote: "Corner is dark", flagged: true });
     const ev = (await t.call("GET", `/api/owner/restaurants/${HARBOUR.id}/checkup`, { cookie: owner })).json().evidence;
-    expect(ev[0]).toMatchObject({ status: "submitted", expired: false });
+    expect(ev.find((e: { id: string }) => e.id === latest.id)).toMatchObject({ status: "submitted", expired: false });
   });
 });

@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAdmin } from "../../auth/sessions.js";
@@ -12,6 +12,7 @@ import {
   restaurantOwners,
   restaurantResponses,
   restaurants,
+  sessions,
   users,
 } from "../../db/schema.js";
 import { audit } from "../../lib/audit.js";
@@ -35,8 +36,12 @@ const EvidenceQuery = z.object({
 });
 const EvidenceDecision = z.object({ decision: z.enum(["verified", "rejected", "more"]), reviewNote: cleanText(1000).optional() });
 const EvidencePatch = z.object({ flagged: z.boolean().optional(), reviewNote: cleanText(1000).optional(), containsPeople: z.boolean().optional() });
+const ResolutionDecision = z
+  .object({ decision: z.enum(["approve", "reject"]), reason: cleanText(200).optional() })
+  .refine((b) => b.decision !== "reject" || !!b.reason, { message: "Say why the proof isn't enough.", path: ["reason"] });
+
 const ReportDecision = z
-  .object({ decision: z.enum(["accept", "reject", "more", "coordinated", "keep"]), reason: cleanText(200).optional() })
+  .object({ decision: z.enum(["accept", "reject", "false", "more", "coordinated", "keep"]), reason: cleanText(200).optional() })
   .refine((b) => b.decision !== "reject" || !!b.reason, { message: "Give a reason for rejecting.", path: ["reason"] });
 const Action = z.object({
   actionOn: isoDate,
@@ -50,13 +55,30 @@ const NewRestaurant = z.object({
   area: cleanText(120).pipe(z.string().min(2)),
   city: cleanText(80).pipe(z.string().min(2)),
   category: cleanText(60).pipe(z.string().min(2)),
-  licenceNumber: z.string().regex(/^\d{14}$/, "FSSAI licence numbers are 14 digits"),
+  licenceNumber: z.string().regex(/^\d{14}$/, "FSSAI licence numbers are 14 digits").optional(),
   location: z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }).optional(),
   lastVerifiedOn: isoDate,
 });
+const LicenceCheck = z.object({ status: z.enum(["active", "inactive", "not_found"]) });
+const RestaurantPatch = z.object({ licenceNumber: z.string().regex(/^\d{14}$/, "FSSAI licence numbers are 14 digits") });
 const RequirementPatch = z.object({ weight: z.number().int().min(1).max(5).optional(), critical: z.boolean().optional() });
 const CategoryPatch = z.object({ expiryDays: z.number().int().min(1).max(730) });
 const AuditQuery = z.object({ entityType: z.string().max(40).optional(), entityId: z.string().max(60).optional(), limit: z.coerce.number().int().min(1).max(200).default(100) });
+
+const DAY = 86_400_000;
+
+/* the moderation queue: new reports, reports the restaurant flagged, and "action taken" proof to check */
+const NEEDS_MODERATION = or(
+  eq(reports.status, "pending"),
+  and(eq(reports.flaggedByOwner, true), sql`${reports.status} <> 'rejected'`),
+  and(eq(reports.status, "accepted"), eq(restaurantResponses.status, "pending")),
+);
+/* +91 98xxx xx003: enough to recognise an account in the list, not enough to call it */
+const maskPhone = (e164: string) => {
+  const local = e164.replace(/^\+91/, "");
+  return `+91 ${local.slice(0, 2)}xxx xx${local.slice(7)}`;
+};
+const WEEK = 7 * DAY;
 
 const NOTES = {
   more: "Reviewer requested more evidence before verification. Check items marked 'More needed'.",
@@ -90,6 +112,8 @@ export async function adminRoutes(app: FastifyInstance) {
     containsPeople: e.containsPeople,
     capturedOn: e.capturedOn,
     validUntilDays: cat.expiryDays - daysBetween(e.capturedOn, today()),
+    /* every upload is reviewed within 24 hours of arriving */
+    verifyBy: new Date(e.createdAt.getTime() + DAY).toISOString(),
     note: e.note,
     reviewNote: e.reviewNote,
     submittedBy: phone ? displayPhone(phone) : null,
@@ -108,7 +132,8 @@ export async function adminRoutes(app: FastifyInstance) {
     const [rp] = await db
       .select({ n: count() })
       .from(reports)
-      .where(or(eq(reports.status, "pending"), and(eq(reports.flaggedByOwner, true), sql`${reports.status} <> 'rejected'`)));
+      .leftJoin(restaurantResponses, eq(restaurantResponses.reportId, reports.id))
+      .where(NEEDS_MODERATION);
     /* evidence that stops counting within 7 days */
     const [ex] = await db
       .select({ n: count() })
@@ -116,7 +141,8 @@ export async function adminRoutes(app: FastifyInstance) {
       .innerJoin(requirements, eq(requirements.id, evidence.requirementId))
       .innerJoin(requirementCategories, eq(requirementCategories.key, requirements.categoryKey))
       .where(and(ne(evidence.status, "rejected"), sql`(${evidence.capturedOn} + ${requirementCategories.expiryDays}) - ${today()}::date between 0 and 7`));
-    return { pendingEvidence: ev?.n ?? 0, verificationRequests: vr?.n ?? 0, reportsToModerate: rp?.n ?? 0, expiringSoon: ex?.n ?? 0 };
+    const [lc] = await db.select({ n: count() }).from(restaurants).where(needsLicenceCheck());
+    return { pendingEvidence: ev?.n ?? 0, verificationRequests: vr?.n ?? 0, reportsToModerate: rp?.n ?? 0, expiringSoon: ex?.n ?? 0, licenceChecks: lc?.n ?? 0 };
   });
 
   /* the checkup as staff edit it: categories with their expiry, requirements with weight and critical flag */
@@ -269,19 +295,28 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get("/api/admin/reports", async () => {
     const rows = await db
-      .select({ rep: reports, r: restaurants, verifiedAt: users.phoneVerifiedAt, response: restaurantResponses.text })
+      .select({ rep: reports, r: restaurants, verifiedAt: users.phoneVerifiedAt, bannedAt: users.bannedAt, resp: restaurantResponses })
       .from(reports)
       .leftJoin(restaurants, eq(restaurants.id, reports.restaurantId))
       .leftJoin(users, eq(users.id, reports.userId))
       .leftJoin(restaurantResponses, eq(restaurantResponses.reportId, reports.id))
-      .where(or(eq(reports.status, "pending"), and(eq(reports.flaggedByOwner, true), sql`${reports.status} <> 'rejected'`)))
+      .where(NEEDS_MODERATION)
       .orderBy(asc(reports.createdAt))
       .limit(200);
     const ev = rows.length ? await db.select().from(reportEvidence).where(inArray(reportEvidence.reportId, rows.map((x) => x.rep.id))) : [];
+    const reporterIds = [...new Set(rows.map((x) => x.rep.userId).filter((x): x is string => !!x))];
+    const falseCounts = reporterIds.length
+      ? await db
+          .select({ userId: reports.userId, n: count() })
+          .from(reports)
+          .where(and(inArray(reports.userId, reporterIds), eq(reports.falseReport, true), gte(reports.moderatedAt, new Date(deps.now().getTime() - WEEK))))
+          .groupBy(reports.userId)
+      : [];
     const links = new Map(await Promise.all(ev.map(async (e) => [e.id, await deps.storage.signedGetUrl(e.storageKey, 900)] as const)));
+    const proofLinks = new Map(await Promise.all(rows.filter((x) => x.resp?.storageKey).map(async (x) => [x.rep.id, await deps.storage.signedGetUrl(x.resp!.storageKey!, 900)] as const)));
     const now = deps.now();
     return {
-      items: rows.map(({ rep, r, verifiedAt, response }) => {
+      items: rows.map(({ rep, r, verifiedAt, bannedAt, resp }) => {
         const kinds = ev.filter((e) => e.reportId === rep.id).map((e) => e.kind);
         const hasEvidence = kinds.some((k) => k !== "note");
         /* moderators see how long the number has been verified, never the number */
@@ -294,13 +329,28 @@ export async function adminRoutes(app: FastifyInstance) {
           text: rep.text,
           channel: rep.channel,
           receivedOn: isoDateIST(rep.createdAt),
+          /* every report is verified within 24 hours of arriving */
+          verifyBy: new Date(rep.createdAt.getTime() + DAY).toISOString(),
+          reporterId: rep.userId,
+          reporterFalseThisWeek: falseCounts.find((c) => c.userId === rep.userId)?.n ?? 0,
+          reporterBanned: !!bannedAt,
           status: rep.status,
           askMore: rep.askMore,
           share: rep.share,
           flaggedByOwner: rep.flaggedByOwner,
           evidence: kinds,
           files: ev.filter((e) => e.reportId === rep.id).map((e) => ({ kind: e.kind, name: e.originalName, url: links.get(e.id)! })),
-          response,
+          response: resp?.text ?? null,
+          /* the owner says it's fixed: check the proof within 24 hours of it arriving */
+          resolution: resp
+            ? {
+                text: resp.text,
+                status: resp.status,
+                sentAt: resp.createdAt.toISOString(),
+                verifyBy: new Date(resp.createdAt.getTime() + DAY).toISOString(),
+                proof: resp.storageKey ? { kind: resp.proofKind ?? "photo", name: resp.originalName, url: proofLinks.get(rep.id)! } : null,
+              }
+            : null,
           numberAgeDays,
           countsTowardEscalation: !rep.share
             ? "No · kept private"
@@ -316,6 +366,24 @@ export async function adminRoutes(app: FastifyInstance) {
     };
   });
 
+  /* the restaurant's "action taken": approve the proof (it goes public with the report) or turn it down with a reason */
+  app.post("/api/admin/reports/:id/resolution", async (req, reply) => {
+    const admin = requireAdmin(req);
+    const { id } = parse(idParam, req.params);
+    const body = parse(ResolutionDecision, req.body);
+    const [resp] = await db.select().from(restaurantResponses).where(eq(restaurantResponses.reportId, id)).limit(1);
+    if (!resp) throw notFound("The restaurant hasn't marked this report as resolved.");
+    if (resp.status !== "pending") throw conflict("ALREADY_DECIDED", "This proof has already been checked.");
+    await db.transaction(async (tx) => {
+      await tx
+        .update(restaurantResponses)
+        .set({ status: body.decision === "approve" ? "approved" : "rejected", reviewNote: body.reason ?? null, reviewedBy: admin.id, reviewedAt: deps.now() })
+        .where(eq(restaurantResponses.reportId, id));
+      await audit(tx, { actorId: admin.id, action: `resolution.${body.decision}`, entityType: "report", entityId: id, data: body.reason ? { reason: body.reason } : undefined });
+    });
+    return reply.status(204).send();
+  });
+
   app.post("/api/admin/reports/:id/decision", async (req, reply) => {
     const admin = requireAdmin(req);
     const { id } = parse(idParam, req.params);
@@ -329,6 +397,8 @@ export async function adminRoutes(app: FastifyInstance) {
         ? { status: "accepted" as const, askMore: false, notifiedAt: rep.share && rep.restaurantId ? now : null, ...moderated }
         : body.decision === "reject"
           ? { status: "rejected" as const, askMore: false, rejectReason: body.reason!, flaggedByOwner: false, ...moderated }
+          : body.decision === "false"
+            ? { status: "rejected" as const, falseReport: true, askMore: false, rejectReason: "the complaint wasn't true", flaggedByOwner: false, ...moderated }
           : body.decision === "coordinated"
             ? { status: "rejected" as const, coordinated: true, askMore: false, rejectReason: "part of a coordinated set of reports", ...moderated }
             : body.decision === "more"
@@ -342,13 +412,110 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.status(204).send();
   });
 
+  /* ---------- bans: admins only, after 2 false reports in 7 days ---------- */
+  app.post("/api/admin/users/:id/ban", async (req, reply) => {
+    const admin = requireAdmin(req);
+    const { id } = parse(uuidParam, req.params);
+    const [u] = await db.select({ role: users.role, bannedAt: users.bannedAt }).from(users).where(eq(users.id, id)).limit(1);
+    if (!u) throw notFound("No such account.");
+    if (u.role === "admin") throw conflict("NOT_ALLOWED", "Admins can't be banned. Remove the admin role first.");
+    if (u.bannedAt) throw conflict("ALREADY_BANNED", "This account is already banned.");
+    const [f] = await db
+      .select({ n: count() })
+      .from(reports)
+      .where(and(eq(reports.userId, id), eq(reports.falseReport, true), gte(reports.moderatedAt, new Date(deps.now().getTime() - WEEK))));
+    if ((f?.n ?? 0) < 2) throw conflict("NOT_ENOUGH_FALSE_REPORTS", "A ban needs at least 2 reports marked false in the last 7 days.");
+    await db.transaction(async (tx) => {
+      await tx.update(users).set({ bannedAt: deps.now(), bannedBy: admin.id, bannedReason: `${f!.n} false reports in 7 days` }).where(eq(users.id, id));
+      await tx.delete(sessions).where(eq(sessions.userId, id));
+      await audit(tx, { actorId: admin.id, action: "user.ban", entityType: "user", entityId: id, data: { falseReports: f!.n } });
+    });
+    return reply.status(204).send();
+  });
+
+  app.post("/api/admin/users/:id/unban", async (req, reply) => {
+    const admin = requireAdmin(req);
+    const { id } = parse(uuidParam, req.params);
+    const [u] = await db.update(users).set({ bannedAt: null, bannedBy: null, bannedReason: null }).where(and(eq(users.id, id), sql`${users.bannedAt} is not null`)).returning({ id: users.id });
+    if (!u) throw notFound("No banned account with that ID.");
+    await audit(db, { actorId: admin.id, action: "user.unban", entityType: "user", entityId: id });
+    return reply.status(204).send();
+  });
+
+  /* banned accounts, with the number partly hidden */
+  app.get("/api/admin/banned", async () => {
+    const rows = await db.select().from(users).where(sql`${users.bannedAt} is not null`).orderBy(desc(users.bannedAt));
+    return {
+      items: rows.map((u) => ({ id: u.id, phone: maskPhone(u.phone), bannedAt: u.bannedAt!.toISOString(), reason: u.bannedReason })),
+    };
+  });
+
+  /* ---------- FSSAI licence checks ----------
+     FoSCoS's public search sits behind a captcha, so it isn't queried automatically: staff look the licence up there
+     and record what it showed. A check is due when a licence was never checked, or was last checked 90+ days ago. */
+  function needsLicenceCheck() {
+    return and(sql`${restaurants.licenceNumber} is not null`, or(isNull(restaurants.licenceStatus), sql`${restaurants.licenceCheckedOn} < ${today()}::date - 90`));
+  }
+
+  app.get("/api/admin/licence-checks", async () => {
+    const rows = await db
+      .select({ r: restaurants, owner: restaurantOwners.restaurantId })
+      .from(restaurants)
+      .leftJoin(restaurantOwners, eq(restaurantOwners.restaurantId, restaurants.id))
+      .where(needsLicenceCheck())
+      .orderBy(sql`${restaurants.licenceStatus} is not null`, sql`${restaurantOwners.restaurantId} is null`, asc(restaurants.name))
+      .limit(100);
+    return {
+      items: rows.map(({ r, owner }) => ({
+        id: r.id,
+        name: r.name,
+        area: r.area,
+        city: r.city,
+        licenceNumber: r.licenceNumber,
+        licenceStatus: r.licenceStatus,
+        licenceCheckedOn: r.licenceCheckedOn,
+        source: r.source,
+        claimed: owner != null,
+      })),
+    };
+  });
+
+  app.post("/api/admin/restaurants/:id/licence-check", async (req, reply) => {
+    const admin = requireAdmin(req);
+    const { id } = parse(idParam, req.params);
+    const { status } = parse(LicenceCheck, req.body);
+    const [r] = await db.select({ lic: restaurants.licenceNumber }).from(restaurants).where(eq(restaurants.id, id)).limit(1);
+    if (!r) throw notFound("No restaurant with that ID.");
+    if (!r.lic) throw conflict("NO_LICENCE", "Add the licence number first.");
+    await db.transaction(async (tx) => {
+      await tx.update(restaurants).set({ licenceStatus: status, licenceCheckedOn: today(), updatedAt: deps.now() }).where(eq(restaurants.id, id));
+      await audit(tx, { actorId: admin.id, action: `licence.${status}`, entityType: "restaurant", entityId: id, data: { licenceNumber: r.lic } });
+    });
+    return reply.status(204).send();
+  });
+
+  /* add or correct a licence number (places imported from OpenStreetMap have none) */
+  app.patch("/api/admin/restaurants/:id", async (req, reply) => {
+    const admin = requireAdmin(req);
+    const { id } = parse(idParam, req.params);
+    const { licenceNumber } = parse(RestaurantPatch, req.body);
+    const [dupe] = await db.select({ id: restaurants.id }).from(restaurants).where(and(eq(restaurants.licenceNumber, licenceNumber), ne(restaurants.id, id))).limit(1);
+    if (dupe) throw conflict("DUPLICATE_LICENCE", `Licence ${licenceNumber} is already listed (restaurant ${dupe.id}).`);
+    const [r] = await db.update(restaurants).set({ licenceNumber, licenceStatus: null, licenceCheckedOn: null, updatedAt: deps.now() }).where(eq(restaurants.id, id)).returning({ id: restaurants.id });
+    if (!r) throw notFound("No restaurant with that ID.");
+    await audit(db, { actorId: admin.id, action: "restaurant.licence", entityType: "restaurant", entityId: id, data: { licenceNumber } });
+    return reply.status(204).send();
+  });
+
   /* ---------- the official record ---------- */
 
   app.post("/api/admin/restaurants", async (req, reply) => {
     const admin = requireAdmin(req);
     const body = parse(NewRestaurant, req.body);
-    const [dupe] = await db.select({ id: restaurants.id }).from(restaurants).where(eq(restaurants.licenceNumber, body.licenceNumber)).limit(1);
-    if (dupe) throw conflict("DUPLICATE_LICENCE", `Licence ${body.licenceNumber} is already listed (restaurant ${dupe.id}).`);
+    if (body.licenceNumber) {
+      const [dupe] = await db.select({ id: restaurants.id }).from(restaurants).where(eq(restaurants.licenceNumber, body.licenceNumber)).limit(1);
+      if (dupe) throw conflict("DUPLICATE_LICENCE", `Licence ${body.licenceNumber} is already listed (restaurant ${dupe.id}).`);
+    }
     const row = await db.transaction(async (tx) => {
       const [r] = await tx
         .insert(restaurants)
@@ -357,7 +524,7 @@ export async function adminRoutes(app: FastifyInstance) {
           area: body.area,
           city: body.city,
           category: body.category,
-          licenceNumber: body.licenceNumber,
+          licenceNumber: body.licenceNumber ?? null,
           location: body.location ? { x: body.location.lng, y: body.location.lat } : null,
           lastVerifiedOn: body.lastVerifiedOn,
         })

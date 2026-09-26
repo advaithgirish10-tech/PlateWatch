@@ -22,6 +22,9 @@ function phoneOrThrow(input: string) {
   return phone;
 }
 
+export const bannedError = () =>
+  new HttpError(403, "BANNED", "This number is banned from PlateWatch after repeated false reports. If you think this is a mistake, write to grievance@platewatch.in.");
+
 const codeHash = (deps: Deps, phone: string, code: string) => hmac(deps.config.OTP_PEPPER, `${phone}:${code}`);
 
 export async function requestOtp(deps: Deps, input: { phone: string; ip: string }) {
@@ -29,6 +32,8 @@ export async function requestOtp(deps: Deps, input: { phone: string; ip: string 
   const now = deps.now();
   const phone = phoneOrThrow(input.phone);
 
+  const [banned] = await db.select({ at: users.bannedAt }).from(users).where(eq(users.phone, phone)).limit(1);
+  if (banned?.at) throw bannedError();
   const [last] = await db
     .select({ createdAt: otpChallenges.createdAt })
     .from(otpChallenges)
@@ -102,6 +107,7 @@ export async function verifyOtp(deps: Deps, input: { phone: string; code: string
   }
 
   const [existing] = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
+  if (existing?.bannedAt) throw bannedError();
   const needsConsent = !existing || existing.consentVersion !== config.CONSENT_VERSION;
   if (needsConsent && input.consent !== true) {
     throw badRequest("Agree to how PlateWatch uses your number to continue.", { code: "CONSENT_REQUIRED" });

@@ -1,13 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { jpegWithGps, setupApp, type T } from "./helpers.js";
+import { jpegWithGps, samplePdf, setupApp, type T } from "./helpers.js";
 
 let t: T;
-let reporter: string, owner: string, admin: string;
+let reporter: string, owner: string, ownerAsUser: string, admin: string;
 
 beforeAll(async () => {
   t = await setupApp();
   reporter = await t.login("9822200001");
-  owner = await t.login("9822200002");
+  owner = await t.login("9822200002", { owner: true });
+  /* the same person's user login, in another tab */
+  ownerAsUser = await t.login("9822200002");
   admin = await t.login("9822200003", { admin: true });
   await t.call("POST", "/api/owner/claims", { cookie: owner, body: { restaurantId: 13, licenceNumber: "11526027001589" } });
 });
@@ -67,7 +69,7 @@ describe("moderation", () => {
     expect(photoReport).toMatchObject({ evidence: ["photo"], numberAgeDays: 7, countsTowardEscalation: "Yes · weight 1.0 once accepted" });
   });
 
-  it("publishes an accepted, shared report to the profile and the restaurant, who can reply once", async () => {
+  it("publishes an accepted, shared report to the profile and the restaurant, who marks it resolved with proof", async () => {
     const queue = (await t.call("GET", "/api/admin/reports", { cookie: admin })).json().items;
     const x = queue.find((i: { text: string }) => i.text === "Cockroach near the counter");
     expect((await t.call("POST", `/api/admin/reports/${x.id}/decision`, { cookie: admin, body: { decision: "accept" } })).statusCode).toBe(204);
@@ -81,10 +83,43 @@ describe("moderation", () => {
 
     const ownerView = (await t.call("GET", "/api/owner/restaurants/13/reports", { cookie: owner })).json().items;
     expect(ownerView.map((i: { id: number }) => i.id)).toEqual([x.id]);
-    const reply = () => t.call("POST", `/api/owner/restaurants/13/reports/${x.id}/response`, { cookie: owner, body: { text: "Pest control done on 26 Sep; certificate uploaded." } });
-    expect((await reply()).statusCode).toBe(201);
-    expect((await reply()).statusCode).toBe(409);
-    expect((await t.call("GET", "/api/restaurants/13")).json().reports[0].response.text).toMatch(/Pest control done/);
+    expect(ownerView[0].photos).toHaveLength(1);
+    expect(ownerView[0].public).toBe(true);
+
+    /* proof is required: a photo or a PDF */
+    const resolve = (uploadId?: string) => t.call("POST", `/api/owner/restaurants/13/reports/${x.id}/response`, { cookie: owner, body: { text: "Pest control done on 26 Sep; certificate attached.", ...(uploadId ? { uploadId } : {}) } });
+    expect((await resolve()).statusCode).toBe(400);
+    const photo = await t.upload(owner, "response", await jpegWithGps(), "image/jpeg", "counter.jpg");
+    expect((await resolve(photo.uploadId!)).statusCode).toBe(201);
+    /* waiting for PlateWatch: not public yet, and in the moderation queue */
+    expect((await t.call("GET", "/api/restaurants/13")).json().reports[0].response).toBeNull();
+    const again = await t.upload(owner, "response", samplePdf(), "application/pdf", "cert.pdf");
+    expect((await resolve(again.uploadId!)).json().message).toMatch(/waiting for PlateWatch/);
+    const inQueue = (await t.call("GET", "/api/admin/reports", { cookie: admin })).json().items.find((i: { id: number }) => i.id === x.id);
+    expect(inQueue.resolution).toMatchObject({ status: "pending", proof: { kind: "photo" } });
+
+    /* turned down: the owner sees why and sends new proof */
+    expect((await t.call("POST", `/api/admin/reports/${x.id}/resolution`, { cookie: admin, body: { decision: "reject" } })).statusCode).toBe(400);
+    expect((await t.call("POST", `/api/admin/reports/${x.id}/resolution`, { cookie: admin, body: { decision: "reject", reason: "The photo doesn't show the counter" } })).statusCode).toBe(204);
+    expect((await t.call("GET", "/api/owner/restaurants/13/reports", { cookie: owner })).json().items[0].response).toMatchObject({ status: "rejected", reviewNote: "The photo doesn't show the counter" });
+    expect((await resolve(again.uploadId!)).statusCode).toBe(201);
+
+    /* approved: public with its proof */
+    expect((await t.call("POST", `/api/admin/reports/${x.id}/resolution`, { cookie: admin, body: { decision: "approve" } })).statusCode).toBe(204);
+    const pub = (await t.call("GET", "/api/restaurants/13")).json().reports[0];
+    expect(pub.response).toMatchObject({ text: expect.stringMatching(/Pest control done/), proof: { kind: "document" } });
+    expect((await resolve()).statusCode).toBe(400);
+  });
+
+  it("shows a report publicly for 2 weeks after it was made; the restaurant keeps it", async () => {
+    const pub = (await t.call("GET", "/api/restaurants/13")).json().reports[0];
+    const left = Date.parse(pub.publicUntil) - t.clock.now.getTime();
+    expect(pub.photos).toEqual([]); /* this test runs with the public gallery switched off */
+    t.advance(left + 1000);
+    expect((await t.call("GET", "/api/restaurants/13")).json().reports).toEqual([]);
+    const ownerView = (await t.call("GET", "/api/owner/restaurants/13/reports", { cookie: owner })).json().items;
+    expect(ownerView[0]).toMatchObject({ public: false });
+    t.advance(-(left + 1000));
   });
 
   it("needs a reason to reject, and tells the reporter why", async () => {
@@ -97,10 +132,10 @@ describe("moderation", () => {
   });
 
   it("hides private reports from the restaurant and the profile", async () => {
-    const r = await report(owner, { restaurantId: 2, share: false });
+    const r = await report(ownerAsUser, { restaurantId: 2, share: false });
     await t.call("POST", `/api/admin/reports/${r.json().id}/decision`, { cookie: admin, body: { decision: "accept" } });
     expect((await t.call("GET", "/api/restaurants/2")).json().reports).toEqual([]);
-    expect((await t.call("GET", "/api/me/reports", { cookie: owner })).json().items[0].stages).toEqual(["Awaiting moderation", "Accepted"]);
+    expect((await t.call("GET", "/api/me/reports", { cookie: ownerAsUser })).json().items[0].stages).toEqual(["Awaiting moderation", "Accepted"]);
   });
 
   it("lets the restaurant flag a report back to moderators, who see its reply and photos", async () => {
@@ -110,7 +145,7 @@ describe("moderation", () => {
     const queue = (await t.call("GET", "/api/admin/reports", { cookie: admin })).json().items;
     expect(queue.length).toBe(queueBefore + 1);
     const flagged = queue.find((i: { id: number }) => i.id === published.id);
-    expect(flagged).toMatchObject({ flaggedByOwner: true, response: expect.stringMatching(/Pest control done/) });
+    expect(flagged).toMatchObject({ flaggedByOwner: true, response: expect.stringMatching(/Pest control done/), resolution: { status: "approved" } });
     expect(flagged.files).toEqual([expect.objectContaining({ kind: "photo", name: "cockroach.jpg", url: expect.stringMatching(/^\/api\/dev\/storage\//) })]);
   });
 
@@ -136,8 +171,8 @@ describe("moderation", () => {
     expect((await t.call("POST", `/api/admin/reports/${id}/decision`, { cookie: admin, body: { decision: "more" } })).statusCode).toBe(204);
     expect((await t.call("GET", "/api/me/reports", { cookie: reporter })).json().items.find((i: { id: number }) => i.id === id).askMore).toBe(true);
     /* nobody else can add to it */
-    const { uploadId } = await t.upload(owner, "report", await jpegWithGps(), "image/jpeg");
-    expect((await t.call("POST", `/api/reports/${id}/evidence`, { cookie: owner, body: { evidence: [{ uploadId }] } })).statusCode).toBe(404);
+    const { uploadId } = await t.upload(ownerAsUser, "report", await jpegWithGps(), "image/jpeg");
+    expect((await t.call("POST", `/api/reports/${id}/evidence`, { cookie: ownerAsUser, body: { evidence: [{ uploadId }] } })).statusCode).toBe(404);
     expect((await add()).statusCode).toBe(201);
     const mine = (await t.call("GET", "/api/me/reports", { cookie: reporter })).json().items.find((i: { id: number }) => i.id === id);
     expect(mine).toMatchObject({ askMore: false, evidence: ["photo"] });

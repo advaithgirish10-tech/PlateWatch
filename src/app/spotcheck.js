@@ -149,7 +149,8 @@ function items(rid){
 }
 function grouped(rid){
   const all=items(rid);
-  return CATS.map(c=>({c,list:all.filter(x=>x.cat===c.k).sort((a,b)=>b.e.date.localeCompare(a.e.date)||b.e.id-a.e.id)})).filter(g=>g.list.length);
+  /* diners see the last 30 days of approved photos, as on the public profile */
+  return CATS.map(c=>({c,list:all.filter(x=>x.cat===c.k&&Date.now()-Date.parse(x.e.date)<=30*864e5).sort((a,b)=>b.e.date.localeCompare(a.e.date)||b.e.id-a.e.id)})).filter(g=>g.list.length);
 }
 const flat=rid=>grouped(rid).flatMap(g=>g.list);
 const tagHTML=e=>`<span class="gtag${e.src==="spot"?" gtag-spot":""}">${e.src==="spot"?"Spot check":"Checkup"}</span>`;
@@ -161,7 +162,7 @@ function thumb(rid,x,i){
 }
 function galleryHTML(rid){
   const g=grouped(rid);
-  if(!g.length)return `<p class="muted gal-empty">No kitchen photos yet.</p>`;
+  if(!g.length)return `<p class="muted gal-empty">No approved kitchen photos from the last 30 days.</p>`;
   let i=0;
   return `<div class="gal">${g.map(({c,list})=>{
     const recent=list.slice(0,SHOWN).map(x=>thumb(rid,x,i++)).join(""),older=list.slice(SHOWN).map(x=>thumb(rid,x,i++)).join(""),hid=`gh-${rid}-${c.k}`;

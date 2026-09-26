@@ -86,7 +86,7 @@ function setScope(s){scope=s;document.querySelectorAll("#mapSheet [data-scope]")
 /* the query the filters describe; "In this map area" adds the map's bounds */
 function query(){
   const f=filters(),p=new URLSearchParams({sort:f.sort,limit:"500"});
-  if(f.q.trim())p.set("q",f.q.trim());if(f.city)p.set("city",f.city);if(f.status)p.set("status",f.status);if(f.badge)p.set("badge",f.badge);
+  if(f.q.trim())p.set("q",f.q.trim());if(f.city)p.set("city",f.city);if(f.status)p.set("status",f.status);if(f.badge)p.set("badge",f.badge);if(f.licence)p.set("licence",f.licence);
   if(scope==="area"&&map){const b=map.getBounds(),c=(v,lo,hi)=>Math.max(lo,Math.min(hi,v)).toFixed(5);
     p.set("bbox",[c(b.getWest(),-180,180),c(b.getSouth(),-90,90),c(b.getEast(),-180,180),c(b.getNorth(),-90,90)].join(","))}
   return p;
@@ -188,7 +188,7 @@ async function focusPlace(id,known){
 async function searchGo(q){
   q=(q||"").trim();if(!q||!map)return;
   const f=filters(),p=new URLSearchParams({q,limit:"500",sort:f.sort});
-  if(f.city)p.set("city",f.city);if(f.status)p.set("status",f.status);if(f.badge)p.set("badge",f.badge);
+  if(f.city)p.set("city",f.city);if(f.status)p.set("status",f.status);if(f.badge)p.set("badge",f.badge);if(f.licence)p.set("licence",f.licence);
   let all;try{all=(await api("GET","/restaurants?"+p)).items}catch(_){return}
   remember(all);if(!all.length)return;
   const lq=q.toLowerCase(),pts=all.filter(r=>r.location);

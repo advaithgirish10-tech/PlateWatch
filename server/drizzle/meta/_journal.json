@@ -22,6 +22,48 @@
       "when": 1790319522237,
       "tag": "0002_audit_append_only",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790335377803,
+      "tag": "0003_osm_and_licence_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790402783162,
+      "tag": "0004_false_reports_and_bans",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790403937037,
+      "tag": "0005_evidence_schedule",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790403968462,
+      "tag": "0006_evidence_retention_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790405163385,
+      "tag": "0007_owner_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790406309813,
+      "tag": "0008_report_resolutions",
+      "breakpoints": true
     }
   ]
 }

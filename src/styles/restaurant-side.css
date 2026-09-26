@@ -131,3 +131,86 @@ details.cat[open] summary .ch{transform:rotate(45deg)}
 /* admin: see admin.css */
 .sm{font-size:13px;padding:6px 12px}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:12px 20px;border-radius:999px;font-size:14px;z-index:50;max-width:calc(100% - 32px);text-align:center}
+
+/* live camera for checkup photos */
+html.cam-lock{overflow:hidden}
+.cam{position:fixed;inset:0;z-index:200;background:rgba(10,10,10,.72);display:flex;align-items:center;justify-content:center;padding:16px}
+.cam-panel{background:var(--paper);border-radius:16px;width:min(720px,100%);max-height:calc(100vh - 32px);overflow:auto;padding:18px 18px 20px}
+.cam-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.cam-title{font-size:20px;font-weight:700;margin:0}
+.cam-q{margin:6px 0 14px;color:var(--grey);font-size:14px}
+.cam-view{background:#000;border-radius:12px;overflow:hidden;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center}
+.cam-view video,.cam-view img{width:100%;height:100%;object-fit:contain;display:block}
+.cam-msg{color:#fff;padding:24px;text-align:center;max-width:44ch;margin:0}
+.cam-acts{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+.evrow{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+button.upl{font-family:inherit;background:none;color:inherit;cursor:pointer}
+@media (max-width:560px){.cam{padding:0}.cam-panel{border-radius:0;max-height:100vh;height:100%}.cam-view{aspect-ratio:3/4}}
+
+/* "Write your Remark": the report form on a profile; the camera opens above it */
+html.rmk-lock{overflow:hidden}
+.rmk{position:fixed;inset:0;z-index:150;background:rgba(10,10,10,.6);display:flex;align-items:center;justify-content:center;padding:16px}
+.rmk-panel{background:var(--paper);border-radius:16px;width:min(620px,100%);max-height:calc(100vh - 32px);overflow:auto;padding:20px 20px 22px}
+.rmk-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.rmk-title{font-size:22px;font-weight:700;margin:0}
+.rmk-place{margin:4px 0 16px;color:var(--grey);font-size:14px}
+.rmk-form label{display:block;font-size:14px;font-weight:500;margin:14px 0 6px}
+.rmk-form textarea{width:100%;resize:vertical;min-height:130px}
+.rmk-count{font-family:var(--mono);font-size:12px;color:var(--grey);text-align:right;margin-top:4px}
+.rmk-count.near{color:var(--red)}
+.rmk-shots{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
+.rmk-shot{display:flex;gap:12px;align-items:flex-start;background:var(--card);border:1px dashed var(--rule);border-radius:12px;padding:12px}
+.rmk-shot.has{border-style:solid}
+.rmk-shot b{font-size:14px}
+.rmk-shot p{margin:2px 0 10px;font-size:12px;color:var(--grey)}
+.rmk-thumb{flex:none;width:64px;height:64px;border-radius:8px;background:var(--soft);display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:22px}
+.rmk-thumb img{width:100%;height:100%;object-fit:cover}
+.rmk-note{font-size:13px;color:var(--grey);margin:16px 0 0;line-height:1.5}
+.rmk-form .rmk-share{display:flex;gap:8px;align-items:flex-start;font-weight:400;font-size:13px;color:var(--grey)}
+.rmk-share input{margin-top:3px}
+.rmk-acts{display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+.rmk-done p,.rmk-block{margin:0 0 10px;font-size:15px;line-height:1.5}
+.rmk-ref{font-size:17px}
+@media (max-width:560px){.rmk{padding:0}.rmk-panel{border-radius:0;max-height:100vh;height:100%}.rmk-shots{grid-template-columns:1fr}}
+
+/* checkup: the upload schedule, and Remove on each upload */
+.sched{margin:0 0 18px;max-width:70ch;padding:12px 16px;border-radius:12px;background:var(--card);border:1px solid var(--rule);font-size:14px;line-height:1.55}
+.sched span{display:block;margin-top:6px;color:var(--grey);font-size:13px}
+.ev{grid-template-columns:64px 1fr auto}
+.evrm{align-self:center;background:none;border:1px solid var(--rule);border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;color:var(--red);cursor:pointer}
+.evrm:hover{border-color:var(--red)}
+.evrm:disabled{opacity:.5;cursor:default}
+/* public profile: how often each part needs evidence, and what's overdue */
+.fr-n{display:flex;flex-direction:column;line-height:1.25}
+.fr-n small{font-size:12px;color:var(--grey)}
+.crit.overdue span.muted{color:#BDBBB5;font-size:13px}
+.rmk-hits{display:flex;flex-direction:column;gap:6px;margin-top:10px;max-height:280px;overflow:auto}
+.rmk-hit{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;background:var(--card);border:1px solid var(--rule);border-radius:10px;padding:10px 12px;font:inherit;cursor:pointer}
+.rmk-hit:hover,.rmk-hit:focus-visible{border-color:var(--ink)}
+.rmk-hit b{font-size:15px;font-weight:500}
+.rmk-hit span{font-size:13px;color:var(--grey)}
+.rmk-none{font-size:14px;margin:6px 0 0}
+
+/* the restaurant owner's tab */
+.modebar{display:flex;flex-wrap:wrap;gap:4px 12px;justify-content:center;padding:8px 16px;background:var(--ink);color:var(--paper);font-size:13px}
+.modebar span{color:#BDBBB5}
+
+/* community reports: the full report, its photos, the restaurant's action and how old it is */
+.rep-text{white-space:pre-line}
+.rep-photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.rep-photos a{display:block;width:120px;height:120px;border-radius:10px;overflow:hidden;border:1px solid var(--rule);background:var(--soft)}
+.rep-photos img{width:100%;height:100%;object-fit:cover;display:block}
+.rep-note{margin:8px 0 0;font-size:13px;color:var(--grey)}
+.rep-foot{margin-top:12px;font-size:12.5px;color:var(--grey);font-family:var(--mono)}
+.resp-done{border-left:3px solid var(--green)}
+.resp-no{border-left:3px solid var(--red)}
+.rep-pdf{display:inline-block;margin-top:8px;font-size:14px}
+/* the owner's "Mark as resolved" */
+.resolve{margin-top:14px;padding:14px 16px;border:1px solid var(--rule);border-radius:14px;background:var(--card)}
+.resolve label{display:block;font-size:14px;font-weight:500;margin-bottom:6px}
+.resolve textarea{width:100%;resize:vertical}
+.resolve-proof{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:12px;font-size:14px}
+.resolve-file{display:inline-flex;align-items:center;gap:8px;font-size:13px}
+.resolve-file img,.resolve-file .th{width:44px;height:44px;border-radius:8px;object-fit:cover;background:var(--soft);display:grid;place-items:center;font-family:var(--mono);font-size:10px;color:var(--grey)}
+.resolve-btns{display:flex;flex-wrap:wrap;gap:8px}
+.resolve-acts{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:14px}

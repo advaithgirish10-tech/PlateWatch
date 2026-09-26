@@ -1,11 +1,11 @@
-import { and, count, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { asc, and, count, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireUser } from "../../auth/sessions.js";
+import { requireUser, requireUserLogin } from "../../auth/sessions.js";
 import type { Queryable } from "../../db/client.js";
-import { reportEvidence, reports, restaurants } from "../../db/schema.js";
+import { reportEvidence, reports, restaurantOwners, restaurants } from "../../db/schema.js";
 import { isoDateIST, startOfDayIST } from "../../lib/dates.js";
-import { conflict, notFound, tooMany } from "../../lib/errors.js";
+import { conflict, forbidden, notFound, tooMany } from "../../lib/errors.js";
 import { cleanText, idParam, parse } from "../../lib/validate.js";
 import type { Deps } from "../../types.js";
 import { consumeUpload } from "../uploads/service.js";
@@ -16,7 +16,7 @@ const Body = z
     restaurantId: z.number().int().positive().optional(),
     unlisted: z.object({ name: cleanText(120).pipe(z.string().min(2)), area: cleanText(120).pipe(z.string().min(2)) }).optional(),
     category: z.enum(REPORT_CATEGORIES),
-    text: cleanText(500).optional(),
+    text: cleanText(1000).optional(),
     share: z.boolean(),
     evidence: z
       .array(z.object({ uploadId: z.uuid(), kind: z.enum(["bill", "note"]).optional() }))
@@ -38,8 +38,16 @@ const PER_OUTLET_DAYS = 7;
 async function checkGuardrails(tx: Queryable, deps: Deps, userId: string, place: { restaurantId?: number; unlistedName?: string }) {
   const now = deps.now();
   const [today] = await tx.select({ n: count() }).from(reports).where(and(eq(reports.userId, userId), gte(reports.createdAt, startOfDayIST(now))));
-  if ((today?.n ?? 0) >= deps.config.REPORTS_PER_DAY) throw tooMany("DAILY_LIMIT", "You've reached today's limit. Try again tomorrow.");
+  if ((today?.n ?? 0) >= deps.config.REPORTS_PER_DAY)
+    throw tooMany("DAILY_LIMIT", deps.config.REPORTS_PER_DAY === 1 ? "You can send one report a day. Try again tomorrow." : "You've reached today's limit. Try again tomorrow.");
+  /* a rolling week: the oldest report in it says when the next one is allowed */
   const since = new Date(now.getTime() - PER_OUTLET_DAYS * 86_400_000);
+  const week = await tx.select({ at: reports.createdAt }).from(reports).where(and(eq(reports.userId, userId), gte(reports.createdAt, since))).orderBy(asc(reports.createdAt));
+  if (week.length >= deps.config.REPORTS_PER_WEEK) {
+    const next = new Date(week[0]!.at.getTime() + PER_OUTLET_DAYS * 86_400_000);
+    const when = next.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
+    throw tooMany("WEEKLY_LIMIT", `You've sent ${deps.config.REPORTS_PER_WEEK} reports this week. You can send another from ${when}.`);
+  }
   const same = place.restaurantId
     ? eq(reports.restaurantId, place.restaurantId)
     : and(isNull(reports.restaurantId), sql`lower(${reports.unlistedName}) = lower(${place.unlistedName!})`);
@@ -52,11 +60,13 @@ export async function reportRoutes(app: FastifyInstance) {
   const { db } = deps;
 
   app.post("/api/reports", async (req, reply) => {
-    const user = requireUser(req);
+    const user = requireUserLogin(req);
     const body = parse(Body, req.body);
     if (body.restaurantId) {
       const [r] = await db.select({ id: restaurants.id }).from(restaurants).where(eq(restaurants.id, body.restaurantId)).limit(1);
       if (!r) throw notFound("No restaurant with that ID.");
+      const [own] = await db.select({ id: restaurantOwners.restaurantId }).from(restaurantOwners).where(and(eq(restaurantOwners.restaurantId, body.restaurantId), eq(restaurantOwners.userId, user.id))).limit(1);
+      if (own) throw forbidden("You can't report a restaurant you manage.");
     }
     const place = { restaurantId: body.restaurantId, unlistedName: body.unlisted?.name };
     /* fail fast before touching uploads, then again under a per-user lock */
@@ -100,7 +110,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
   /* a moderator asked for more: the reporter adds a photo, video or bill to their pending report */
   app.post("/api/reports/:id/evidence", async (req, reply) => {
-    const user = requireUser(req);
+    const user = requireUserLogin(req);
     const { id } = parse(idParam, req.params);
     const body = parse(MoreEvidence, req.body);
     const [rep] = await db.select().from(reports).where(and(eq(reports.id, id), eq(reports.userId, user.id))).limit(1);
@@ -137,7 +147,9 @@ export async function reportRoutes(app: FastifyInstance) {
         return {
           id: rep.id,
           ref: reportRef(rep.id),
+          restaurantId: rep.restaurantId,
           place: name ?? `${rep.unlistedName} (not listed)`,
+          createdAt: rep.createdAt.toISOString(),
           category: rep.category,
           date: isoDateIST(rep.createdAt),
           evidence: ev.filter((e) => e.reportId === rep.id).map((e) => e.kind),

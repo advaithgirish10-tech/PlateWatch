@@ -4,11 +4,11 @@
  */
 
 export const CATEGORIES = [
-  { key: "kitchen", name: "Kitchen hygiene", expiryDays: 30 },
-  { key: "storage", name: "Food storage", expiryDays: 30 },
-  { key: "pest", name: "Pest control", expiryDays: 90 },
-  { key: "personal", name: "Personal hygiene", expiryDays: 60 },
-  { key: "clean", name: "Cleaning & sanitation", expiryDays: 30 },
+  { key: "kitchen", name: "Kitchen hygiene", expiryDays: 14 },
+  { key: "storage", name: "Food storage", expiryDays: 14 },
+  { key: "pest", name: "Pest control", expiryDays: 180 },
+  { key: "personal", name: "Personal hygiene", expiryDays: 7 },
+  { key: "clean", name: "Cleaning & sanitation", expiryDays: 14 },
   { key: "docs", name: "Documentation", expiryDays: 365 },
   { key: "ops", name: "Operational safety", expiryDays: 30 },
 ];

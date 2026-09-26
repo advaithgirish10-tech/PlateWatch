@@ -20,7 +20,11 @@ export interface SessionUser {
   whatsappAlerts: boolean;
   phoneVerifiedAt: Date;
   sessionId: string;
+  /* which login this request came from: the diner's or the restaurant owner's */
+  mode: SessionMode;
 }
+
+export type SessionMode = "user" | "owner";
 
 declare module "fastify" {
   interface FastifyInstance {

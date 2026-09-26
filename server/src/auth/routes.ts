@@ -4,7 +4,7 @@ import { z } from "zod";
 import { sessions } from "../db/schema.js";
 import { parse } from "../lib/validate.js";
 import { requestOtp, verifyOtp } from "./otp.js";
-import { clearSessionCookie, createSession, setSessionCookie } from "./sessions.js";
+import { clearSessionCookie, createSession, modeOf, setSessionCookie } from "./sessions.js";
 import { userDto } from "../modules/me/dto.js";
 
 const RequestBody = z.object({ phone: z.string().max(20) });
@@ -21,14 +21,17 @@ export async function authRoutes(app: FastifyInstance) {
   app.post("/api/auth/otp/verify", { config: { rateLimit: { max: 30, timeWindow: "1 hour" } } }, async (req, reply) => {
     const body = parse(VerifyBody, req.body);
     const user = await verifyOtp(deps, body);
-    const { token, maxAgeSeconds } = await createSession(deps.db, user.id, { ip: req.ip, userAgent: req.headers["user-agent"], now: deps.now() });
-    setSessionCookie(deps, reply, token, maxAgeSeconds);
+    /* the owner tab gets an owner session in its own cookie; the user tab's login is untouched */
+    const mode = modeOf(req);
+    const { token, maxAgeSeconds } = await createSession(deps.db, user.id, { ip: req.ip, userAgent: req.headers["user-agent"], now: deps.now(), mode });
+    setSessionCookie(deps, reply, token, maxAgeSeconds, mode);
     return { user: await userDto(deps.db, user) };
   });
 
   app.post("/api/auth/logout", async (req, reply) => {
     if (req.user) await deps.db.delete(sessions).where(eq(sessions.id, req.user.sessionId));
-    clearSessionCookie(reply);
+    /* only this tab's login ends */
+    clearSessionCookie(reply, modeOf(req));
     return reply.status(204).send();
   });
 }

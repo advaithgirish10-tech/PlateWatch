@@ -66,7 +66,7 @@ User-flow fixes on top of the prototype (logic in `platewatch.js`, styles in `sr
 1. **Profile summary line.** Every profile opens with one plain sentence built from the latest official action (FDA Maharashtra), next to its status pill.
 2. **Compliance score paused during an official action.** While a suspension, revocation or improvement notice is open, the public compliance score (profile, homepage previews, QR poster, how-it-works demo) is replaced with "Compliance score paused while an official action is open" and a "Why?" toggle. Owners still see their number, labelled "Paused publicly"; admin live checks add "(paused publicly)".
 3. **Instant search.** Home and tracker search suggest up to 6 matches (combobox/listbox, Up/Down/Enter/Esc). No-results state offers "Report a problem" (pre-filled) and "Tell us this place exists". Tracker shows a coverage note.
-4. **Share on WhatsApp.** A real `wa.me` link (new tab) with the summary sentence and profile URL, plus a "Copy link" fallback.
+4. **Report and Copy link.** The profile's "Share on WhatsApp" button was replaced by **Report** (hidden for the restaurant's own owners). It opens the "Write your Remark" form (`src/app/remark.js`): what went wrong, a remark of up to 1000 characters, and two photos taken with the live camera, the **bill** and the **food** (no gallery upload). Signed-out visitors log in first and come back to the open form. If a limit already applies, the form says so before anything is typed. "Copy link" stays.
 5. **Reporting.** Replaced by WhatsApp reporting (see below).
 6. **Shorter login.** Two screens (number + consent, then OTP). Name and WhatsApp alerts are edited on the account page; login returns the user to where they started (following a place, or the account page).
 7. **Navigation.** Every page has a `#hash` (`#home`, `#tracker`, `#profile-3`, `#report`, `#account`, `#about`, `#how-it-works`, `#restaurants`, `#dashboard`, `#admin`, `#login`), so browser back/forward and deep links work. Profile "Back" returns to the page the user came from.
@@ -92,7 +92,17 @@ Entry points: the Report page, every profile, search no-results ("Report a probl
 7. Confirm: an auto-filled summary card, then "Yes, send" or "Keep private".
 8. Receipt `PW-xxxx`, with Copy for FSSAI and Done.
 
-Guardrails: one report per number per outlet per 7 days, 5 reports per number per day. Reports without a photo, video or bill are saved but never go to the regulator. "Keep private" reports are used only to spot patterns. Each number keeps its own thread, so status updates arrive as new bot messages.
+**Reporting on the site.** Every "Report" and "Write a report" button (profile, Report page, homepage, My alerts, search with no results) opens the "Write your Remark" form. Without a restaurant it first asks which one: search, or name an unlisted place with its area.
+
+**How a report travels.** A diner sends it → PlateWatch checks it within 24 hours (Admin → Community reports) → if accepted and the diner agreed to share it, it appears in the restaurant's dashboard (Reports tab) and on the public profile for 2 weeks, in full, with "Reported 3 days ago". The bill photo stays private. The owner can **Mark as resolved** with a comment and proof (a live camera photo or a PDF). PlateWatch checks that proof within 24 hours; once approved it shows under the report as "Restaurant took action". Rejected or false reports never appear.
+
+**Two tabs, two logins.** The restaurant dashboard always opens in its own browser tab ("For restaurants", "Restaurant owner login"), marked by a black "Restaurant owner tab" bar. It has its own login, so someone can be signed in as a user in one tab and as an owner in the other. Report buttons in the owner tab open the user site in a new tab.
+
+**Restaurant checkup schedule.** Owners upload new photos every 2 weeks for kitchen hygiene, food storage and cleaning; every week for personal hygiene; every month for operational safety; and a PDF every 6 months for pest control. Late items stop counting, the score drops, and the public profile shows "Evidence overdue" with the date it was due. Each upload has a **Remove** button for wrong files. Reviewers check uploads within 24 hours. Approved photos stay in the public Kitchen gallery for 30 days. Photos are deleted after 4 months and PDFs after 2 years.
+
+Every report, from the chat or the profile form, waits for a moderator, who checks it within 24 hours (Admin → Community reports shows the deadline). A report marked **false report** is removed and counts against the reporter. After 2 false reports in 7 days, the admin is offered a ban; bans are only ever made by an admin, and can be lifted under Admin → Banned accounts. A banned number is signed out, can't log in, and is told to write to grievance@platewatch.in.
+
+Guardrails, per person: one report a day (`REPORTS_PER_DAY`), five in any 7 days (`REPORTS_PER_WEEK`), and one about the same restaurant per 7 days. Owners can't report a restaurant they manage. Reports without a photo, video or bill are saved but never go to the regulator. "Keep private" reports are used only to spot patterns. Each number keeps its own thread, so status updates arrive as new bot messages.
 
 **Report statuses (reporter-facing, in the chat and Account → My reports)**
 Awaiting moderation → Accepted → Restaurant notified → Sent to FDA Maharashtra (date) → Official action taken, or Couldn't be used: reason.
@@ -157,6 +167,18 @@ Dots appear in search suggestions, map cards and pins, and the profile header. B
 Tiles come from the public OpenStreetMap tile server, with attribution shown in the map corner. That's fine for a prototype, but production traffic must use a tile provider or self-hosted tiles, per the OpenStreetMap tile usage policy.
 
 Sample data (in the development database): every sample restaurant has plausible coordinates except Temple Road Prasad Stall (Shirdi), left without one to show "Location pending". There are also 20 extra fictional Mumbai places with no official action. A production database starts without them (`npm run db:seed -- --catalog-only`).
+
+## Logins, the checkup and the kitchen gallery
+
+- **Two logins.** "Log in" is for diners: follow places, watch areas, report. "Restaurant owner login" (For restaurants page, or `#owner-login`) goes to the owner's dashboard, or to finding and claiming their restaurant. Both use a one-time code; one phone number can be both.
+- **The checkup.** Owners answer 27 food and kitchen hygiene questions and prove each "Yes". Kitchen, storage, personal hygiene, cleaning and operations take a photo from the **live camera** (`src/app/camera.js`: no picking from the gallery). Pest control and documentation take a **PDF** only. The server enforces both, whatever the browser sends. Reviewers approve or reject each file in Admin → Evidence.
+- **Kitchen gallery.** Approved photos appear on the restaurant's public page, grouped by checkup area. Photos a reviewer marks as showing people are never shown, until faces can be blurred automatically. Turn the gallery off with `PUBLIC_GALLERY=false`.
+
+## Restaurant data: OpenStreetMap and FSSAI licences
+
+- **OpenStreetMap import** (names, types, locations): `npm run import:osm -- --bbox minLng,minLat,maxLng,maxLat --city Mumbai [--area Fort] [--dry-run]` in `server/`. Re-running updates the same places; a restaurant staff edited is never overwritten. Pages credit "© OpenStreetMap contributors", as the ODbL licence requires.
+- **FSSAI licence checks.** OSM has no licence numbers: owners add theirs when they claim, or staff add one in Admin → Official record. FSSAI's FoSCoS search has a captcha, so it isn't scraped: staff open FoSCoS, look the licence up, and record Active, Inactive or Not found in Admin → Licence checks (repeated every 90 days). Profiles show the result with its date, and the tracker filters by it.
+- **Improvement notices and closures** are FDA Maharashtra actions, recorded with their source in Admin → Official record. FoSCoS only shows whether a licence is active.
 
 ## Backend
 
