@@ -208,3 +208,15 @@ footer .x{border-bottom-color:#444}
   .tk-label{display:none}
 }
 @media (prefers-reduced-motion:reduce){.hc5{animation:none}.ph{transform:none!important}}
+
+/* footer: link columns, then the fine print */
+footer .wrap.foot{display:block}
+.foot-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:28px 32px;padding-block:28px 32px;border-bottom:1px solid #2A2A28}
+.foot-cols h2{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#fff;margin:0 0 12px}
+.foot-cols ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+.foot-cols button,.foot-cols a{background:none;border:0;padding:0;font:inherit;font-size:14px;color:#BDBAB0;cursor:pointer;text-align:left;text-decoration:none}
+.foot-cols button:hover,.foot-cols a:hover{color:#fff;text-decoration:underline;text-underline-offset:3px}
+.foot-cols button:focus-visible,.foot-cols a:focus-visible{outline:2px solid #fff;outline-offset:3px}
+.foot-base{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 28px;padding-top:18px;font-size:13px;color:#8C897F}
+.foot-base a{color:inherit}
+#faq{scroll-margin-top:90px}

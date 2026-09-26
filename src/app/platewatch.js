@@ -97,7 +97,9 @@ addEventListener("hashchange",()=>{
   const h=location.hash.slice(1);if(h===hashFor(S.page.p,S.page.arg))return;
   const t=parseHash(h);go(t?t.p:"home",t&&t.arg,{fromHash:true});
 });
-document.addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(b){e.preventDefault();go(b.dataset.go)}});
+document.addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(!b)return;e.preventDefault();go(b.dataset.go);
+  /* a link to a section of a page, e.g. the FAQ on About */
+  const a=b.dataset.anchor&&document.getElementById(b.dataset.anchor);if(a)a.scrollIntoView()});
 document.getElementById("menuBtn").onclick=e=>{const d=document.getElementById("drawer");d.hidden=!d.hidden;e.currentTarget.setAttribute("aria-expanded",String(!d.hidden))};
 document.getElementById("authBtn").onclick=()=>{
   if(MODE==="owner"){if(S.user)go(S.owner!=null?"dash":"biz",S.owner!=null?"overview":undefined);else go("login","owner");return}

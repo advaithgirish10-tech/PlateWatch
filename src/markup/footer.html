@@ -1,12 +1,47 @@
 </main>
 
 <footer>
-  <div class="wrap" style="flex-direction:column;gap:0">
+  <div class="wrap foot">
     <div class="big">PlateWatch</div>
-    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px 28px;padding-top:14px">
+    <nav class="foot-cols" aria-label="Footer">
+      <div>
+        <h2>For diners</h2>
+        <ul>
+          <li><button type="button" data-go="tracker">Search restaurants</button></li>
+          <li><button type="button" data-bot>Write a report</button></li>
+          <li><button type="button" data-go="report">How reporting works</button></li>
+          <li><button type="button" data-go="account">My alerts</button></li>
+        </ul>
+      </div>
+      <div>
+        <h2>For restaurants</h2>
+        <ul>
+          <li><button type="button" data-go="biz">Claim your restaurant</button></li>
+          <li><button type="button" data-owner-login>Restaurant owner login</button></li>
+          <li><button type="button" data-go="verify">How the checkup works</button></li>
+        </ul>
+      </div>
+      <div>
+        <h2>PlateWatch</h2>
+        <ul>
+          <li><button type="button" data-go="about">About</button></li>
+          <li><button type="button" data-go="about" data-anchor="faq">FAQ</button></li>
+          <li><a href="mailto:grievance@platewatch.in">Contact and grievances</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>Official sources</h2>
+        <ul>
+          <li><a href="https://foscos.fssai.gov.in/" target="_blank" rel="noopener">FSSAI FoSCoS: licences and complaints</a></li>
+          <li><a href="https://www.fssai.gov.in/" target="_blank" rel="noopener">FSSAI</a></li>
+          <li><a href="https://fda.maharashtra.gov.in/" target="_blank" rel="noopener">FDA Maharashtra</a></li>
+        </ul>
+      </div>
+    </nav>
+    <div class="foot-base">
       <span>Independent. Not affiliated with FDA Maharashtra or FSSAI.</span>
-      <span><button class="x" data-go="biz">For restaurants</button><span data-staff hidden> · <button class="x" data-go="admin">Admin</button></span></span>
-      <span>Data as of 23 Sep 2026 (sample)</span>
+      <span>Restaurant names and locations include data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a>.</span>
+      <span>© 2026 PlateWatch</span>
     </div>
   </div>
 </footer>
