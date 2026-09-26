@@ -1,8 +1,10 @@
 import { buildApp } from "./app.js";
 import { scheduleRetention } from "./jobs/retention.js";
+import { scheduleNotifications } from "./modules/notifications/delivery.js";
 import { loadConfig } from "./config.js";
 import { createDb } from "./db/client.js";
 import { otpSenderFromConfig, type OtpSender } from "./messaging/otp-sender.js";
+import { noFaceDetector, ssdFaceDetector } from "./storage/faces.js";
 import { storageFromConfig } from "./storage/storage.js";
 
 const config = loadConfig();
@@ -22,14 +24,17 @@ try {
   );
   process.exit(1);
 }
-const app = await buildApp({ config, db, storage, otp, now: () => new Date() });
+const faces = config.FACE_BLUR ? ssdFaceDetector() : noFaceDetector;
+const app = await buildApp({ config, db, storage, otp, faces, now: () => new Date() });
 const real = otpSenderFromConfig(config, app.log);
 
-const stopRetention = scheduleRetention({ config, db, storage, otp, now: () => new Date() }, app.log);
+const stopRetention = scheduleRetention({ config, db, storage, otp, faces, now: () => new Date() }, app.log);
+const stopNotifications = scheduleNotifications({ config, db, storage, otp, faces, now: () => new Date() }, app.log);
 
 const shutdown = async (signal: string) => {
   app.log.info(`${signal} received, shutting down`);
   stopRetention();
+  stopNotifications();
   await app.close();
   await pool.end();
   process.exit(0);

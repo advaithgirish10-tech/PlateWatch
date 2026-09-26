@@ -23,17 +23,25 @@ const EVST={submitted:["Pending review","pend"],more:["More requested","more"],v
 const LV={self:"Claimed · self-reported",pending:"Verification requested",platform:"PlateWatch verified"};
 const TYPES={sus:"Suspended",rev:"Revoked",imp:"Improvement notice",ok:"Reinstated"};
 const RES_REASONS=["The proof doesn't show the problem was fixed","The photo is unclear","The PDF isn't about this problem","The proof shows people's faces"];
+const CLAIM_REASONS=["The certificate is unreadable","The licence number on the certificate doesn't match","The business name or address doesn't match this restaurant","The certificate has expired","Couldn't confirm this number belongs to the business"];
+/* "looks like a file sent before": the earlier one, to compare side by side */
+function reuseHTML(r,noun="photo"){
+  if(!r)return "";
+  const when=new Date(r.date).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});
+  return `<div class="ad-reuse">${ICO.warn}<div><b>${r.exact?`Same file as`:`Looks like the ${noun} from`} ${esc(r.label)}</b><span>${r.restaurant?esc(r.restaurant)+" · ":""}sent ${when}${r.exact?"":` · ${r.distance} of 64 fingerprint bits differ`}</span>
+    <a href="${esc(r.url)}" target="_blank" rel="noopener">Open the earlier file</a></div></div>`;
+}
 const REJECT_REASONS=["No food-safety issue described","Evidence doesn't match the outlet","Duplicate of another report","Personal or abusive content","Not enough detail to act on"];
 const ACTIONS={"evidence.verified":"Approved evidence","evidence.rejected":"Rejected evidence","evidence.more":"Asked for more evidence","evidence.update":"Changed evidence flags","evidence.submit":"Owner submitted evidence","evidence.remove":"Owner removed an upload","evidence.purge":"Deleted old files (photos after 4 months, PDFs after 2 years)",
  "verification.approve":"Approved verification","verification.more":"Asked for more before verifying","verification.reject":"Rejected verification","verification.request":"Owner requested verification",
  "report.accept":"Accepted a report","report.reject":"Rejected a report","report.more":"Asked a reporter for more","report.coordinated":"Marked a report as coordinated","report.keep":"Kept a flagged report published","report.false":"Marked a report as false","report.respond":"Owner marked a report resolved","resolution.approve":"Approved a restaurant's proof","resolution.reject":"Turned down a restaurant's proof","report.flag":"Owner flagged a report",
- "enforcement.add":"Recorded an official action","licence.active":"Licence checked: active","licence.inactive":"Licence checked: inactive","licence.not_found":"Licence checked: not found","restaurant.licence":"Added a licence number","restaurant.import_osm":"Imported from OpenStreetMap","restaurant.create":"Added a restaurant","requirement.update":"Changed a requirement","category.update":"Changed evidence expiry","owner.claim":"Restaurant claimed","user.delete":"Account deleted","user.grant_admin":"Made an admin","user.revoke_admin":"Removed an admin","user.ban":"Banned a reporter","user.unban":"Lifted a ban"};
+ "enforcement.add":"Recorded an official action","licence.active":"Licence checked: active","licence.inactive":"Licence checked: inactive","licence.not_found":"Licence checked: not found","restaurant.licence":"Added a licence number","restaurant.import_osm":"Imported from OpenStreetMap","restaurant.create":"Added a restaurant","requirement.update":"Changed a requirement","category.update":"Changed evidence expiry","owner.claim":"Restaurant claimed","user.delete":"Account deleted","user.grant_admin":"Made an admin","user.revoke_admin":"Removed an admin","user.ban":"Banned a reporter","claim.request":"Owner sent a claim","claim.reject":"Turned down a claim","user.unban":"Lifted a ban"};
 
 /* view state; the data itself is always re-read from the API */
-const A={tab:"verify",summary:null,data:{},err:null,q:"",filter:"all",sort:"new",view:"list",offset:0,sel:null,detail:null,box:null,rejecting:null,rec:{q:"",hits:[],pick:null}};
+const A={tab:"claims",summary:null,data:{},err:null,q:"",filter:"all",sort:"new",view:"list",offset:0,sel:null,detail:null,box:null,rejecting:null,rec:{q:"",hits:[],pick:null}};
 const PAGE=50;
 
-const TABS=[["verify","Verification requests",s=>s.verificationRequests],["evidence","Evidence",s=>s.pendingEvidence],["reports","Community reports",s=>s.reportsToModerate],
+const TABS=[["claims","Restaurant claims",s=>s.claims],["verify","Verification requests",s=>s.verificationRequests],["evidence","Evidence",s=>s.pendingEvidence],["reports","Community reports",s=>s.reportsToModerate],
  ["licence","Licence checks",s=>s.licenceChecks],["record","Official record"],["scoring","Scoring rules"],["expiry","Evidence expiry"],["activity","Activity log"],["banned","Banned accounts"],
  ["escalations","Escalations",null,true],["rules","Escalation rules",null,true],["spot","Spot checks",null,true]];
 
@@ -46,6 +54,7 @@ async function load(tab){
   if(tab==="scoring"||tab==="expiry")A.data.catalog=await api("GET","/admin/catalog");
   if(tab==="activity")A.data.activity=(await api("GET","/admin/audit?limit=100")).items;
   if(tab==="banned")A.data.banned=(await api("GET","/admin/banned")).items;
+  if(tab==="claims")A.data.claims=(await api("GET","/admin/claims")).items;
 }
 async function show(tab){
   if(tab!==A.tab){A.sel=null;A.detail=null;A.box=null;A.rejecting=null}
@@ -70,11 +79,11 @@ function render(loading){
   let h;
   if(A.err)h=errorHTML(A.err);
   else if(loading&&!hasData(A.tab))h=`<div class="ad-surface">${empty("Loading…","Fetching the latest from PlateWatch.")}</div>`;
-  else h=({verify:verifyHTML,evidence:evidenceHTML,reports:reportsHTML,licence:licenceHTML,record:recordHTML,scoring:scoringHTML,expiry:expiryHTML,activity:activityHTML,banned:bannedHTML}[A.tab]||soonHTML)();
+  else h=({verify:verifyHTML,evidence:evidenceHTML,reports:reportsHTML,licence:licenceHTML,record:recordHTML,scoring:scoringHTML,expiry:expiryHTML,activity:activityHTML,banned:bannedHTML,claims:claimsHTML}[A.tab]||soonHTML)();
   $("adm").innerHTML=`<div class="ad-pane" role="tabpanel">${h}</div><div id="admOverlay"></div>`;
   overlays();
 }
-const hasData=t=>({verify:A.data.verify,evidence:A.data.evidence,reports:A.data.reports,licence:A.data.licence,scoring:A.data.catalog,expiry:A.data.catalog,activity:A.data.activity,banned:A.data.banned,record:true}[t]!==undefined)||!["verify","evidence","reports","licence","scoring","expiry","activity","banned","record"].includes(t);
+const hasData=t=>({verify:A.data.verify,evidence:A.data.evidence,reports:A.data.reports,licence:A.data.licence,scoring:A.data.catalog,expiry:A.data.catalog,activity:A.data.activity,banned:A.data.banned,claims:A.data.claims,record:true}[t]!==undefined)||!["verify","evidence","reports","licence","scoring","expiry","activity","banned","claims","record"].includes(t);
 function errorHTML(e){
   if(e.status===401)return `<div class="ad-surface">${empty("Your session ended","Log in again to keep reviewing.",`<button class="ad-btn ad-btn-pri" data-relogin>Log in</button>`)}</div>`;
   if(e.status===403)return `<div class="ad-surface">${empty("Staff only","This account isn't a PlateWatch admin.")}</div>`;
@@ -125,8 +134,10 @@ function evRow(e){
         <section class="ad-sec" aria-label="Checks"><h4 class="ad-lbl">Checks</h4>
           <ul class="ad-obs-list"><li class="ad-obs ad-obs-ok">${ICO.ok}<span>File type confirmed and photo location data removed on upload</span></li>
           <li class="ad-obs ad-obs-info">${ICO.info}<span>${e.validUntilDays>=0?`Counts for ${e.validUntilDays} more day${e.validUntilDays===1?"":"s"} once approved`:"Already past its validity window"}</span></li>
-          ${e.containsPeople?`<li class="ad-obs ad-obs-warn">${ICO.warn}<span>Marked as showing people: never published until faces are blurred</span></li>`:""}</ul>
-          <p class="ad-muted">No automated image checks yet. Review the file yourself.</p></section>
+          ${e.kind==="photo"?`<li class="ad-obs ad-obs-ok">${ICO.ok}<span>${e.facesBlurred?`${e.facesBlurred} face${e.facesBlurred>1?"s":""} found and blurred automatically`:"Checked for faces: none found"}</span></li>`:""}
+          ${e.reuse?`<li class="ad-obs ad-obs-warn">${ICO.warn}<span>Possibly reused: ${e.reuse.exact?"the same file as":"looks like"} ${esc(e.reuse.label)}. Compare in the review panel.</span></li>`:""}
+          ${e.containsPeople?`<li class="ad-obs ad-obs-warn">${ICO.warn}<span>Marked as showing a face the blur missed: kept off the public gallery</span></li>`:""}</ul>
+          <p class="ad-muted">Automatic checks help, but look at the file yourself before approving.</p></section>
       </div>
       <div class="ad-acts">${acts(e)}</div>
     </div></article>`;
@@ -154,6 +165,7 @@ function panelHTML(){
       <button class="ad-iconbtn" data-close="panel" aria-label="Close panel" id="adPanelClose">${ICO.x}</button></div>
     <div class="ad-panel-body">
       ${preview(e,true)}
+      ${reuseHTML(e.reuse,e.kind==="document"?"file":"photo")}
       <section class="ad-psec"><h4 class="ad-lbl">Details</h4><dl class="ad-kv">
         <dt>Restaurant</dt><dd>${esc(e.restaurant.name)} · ${esc(e.restaurant.area)}, ${esc(e.restaurant.city)}</dd>
         <dt>Requirement</dt><dd>${esc(e.requirement.text)}${e.requirement.critical?` <span class="ad-crit">Critical</span>`:""}</dd>
@@ -169,7 +181,7 @@ function panelHTML(){
         ${e.note?`<p class="ad-note"><span class="ad-lbl">Owner's note</span>${esc(e.note)}</p>`:""}
         <textarea class="ad-textarea" rows="3" data-rnote="${e.id}" placeholder="Internal note for other reviewers" aria-label="Reviewer note">${esc(e.reviewNote||"")}</textarea>
         <p class="ad-hint">Internal only. Saved when you leave the box. Not shown to the restaurant.</p>
-        ${e.kind==="photo"?`<label class="check" style="margin-top:12px"><input type="checkbox" data-people="${e.id}" ${e.containsPeople?"checked":""}><span>Shows people. Never published until faces are blurred.</span></label>`:""}</section>
+        ${e.kind==="photo"?`<label class="check" style="margin-top:12px"><input type="checkbox" data-people="${e.id}" ${e.containsPeople?"checked":""}><span>Shows a face the automatic blur missed. Keep it off the public gallery.</span></label>`:""}</section>
     </div>
     ${waiting?`<div class="ad-panel-foot ad-acts">${acts(e)}</div>`:""}
   </aside>`;
@@ -215,7 +227,7 @@ function resolutionHTML(x){
   const p=r.proof,rej=A.rejectingRes===x.id;
   const proof=!p?"":p.kind==="document"?`<a class="ad-btn ad-btn-out" href="${esc(p.url)}" target="_blank" rel="noopener">${ICO.doc}Open PDF proof</a>`
     :`<figure class="ad-scph"><a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="Proof photo for ${esc(x.ref)}"></a><figcaption><b>Proof photo</b></figcaption></figure>`;
-  return `<div class="ad-note ad-res"><span class="ad-lbl">Restaurant says it's resolved · ${dueBadge(r)}</span>${esc(r.text)}<div class="ad-scphotos" style="margin-top:10px">${proof}</div>
+  return `<div class="ad-note ad-res"><span class="ad-lbl">Restaurant says it's resolved · ${dueBadge(r)}</span>${esc(r.text)}<div class="ad-scphotos" style="margin-top:10px">${proof}</div>${p?reuseHTML(p.reuse,p.kind==="document"?"file":"photo"):""}
     ${rej?`<div class="ad-reason"><label class="ad-select"><span>Reason</span><select id="admResReason">${RES_REASONS.map(o=>`<option>${esc(o)}</option>`).join("")}</select></label><button class="ad-btn ad-btn-out" data-res="cancel" data-rep="${x.id}">Cancel</button><button class="ad-btn ad-btn-danger ad-btn-danger-solid" data-res="reject-go" data-rep="${x.id}">Turn down proof</button></div>`
       :`<div class="ad-acts"><span class="ad-td-muted">Approving shows the comment and proof next to the report on the public profile.</span><span class="ad-acts-main"><button class="ad-btn ad-btn-danger" data-res="reject" data-rep="${x.id}">Proof not enough</button><button class="ad-btn ad-btn-pri" data-res="approve" data-rep="${x.id}">Approve proof</button></span></div>`}</div>`;
 }
@@ -229,7 +241,7 @@ function reportRow(x){
       <div class="ad-meta"><span>${esc([x.place.area,x.place.city].filter(Boolean).join(", "))}</span><span>${esc(x.category)}</span><span>${esc(x.ref)}</span><span>Received ${ago(x.receivedOn)}</span><span>via ${x.channel==="whatsapp"?"WhatsApp":"the website"}</span></div></div>
       <div class="ad-badges">${x.resolution&&x.resolution.status==="pending"?`<span class="ad-badge ad-b-more">Proof to check</span>`:""}${pend?dueBadge(x):""}${pend?`<span class="ad-badge ad-b-pend">${x.askMore?"More requested":"Pending"}</span>`:`<span class="ad-badge ad-b-ok">Published</span>`}${x.share?"":`<span class="ad-badge">Kept private</span>`}${x.flaggedByOwner?`<span class="ad-badge ad-b-flag">${ICO.flag}Restaurant flagged as incorrect</span>`:""}</div></div>
     <blockquote class="ad-quote">${esc(x.text)}</blockquote>
-    ${x.files.length?`<div class="ad-scphotos">${x.files.map(f=>f.kind==="photo"||(f.kind==="bill"&&/\.(jpe?g|png|webp)$/i.test(f.name))?`<figure class="ad-scph"><a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(KIND[f.kind])} attached to ${esc(x.ref)}"></a><figcaption><b>${esc(cap(KIND[f.kind]))}</b></figcaption></figure>`:`<figure class="ad-scph"><a class="ad-pv ad-pv-none" href="${esc(f.url)}" target="_blank" rel="noopener">${ICO.doc}<span>Open ${esc(KIND[f.kind])}</span></a></figure>`).join("")}</div>`:""}
+    ${x.files.length?`<div class="ad-scphotos">${x.files.map(f=>f.kind==="photo"||(f.kind==="bill"&&/\.(jpe?g|png|webp)$/i.test(f.name))?`<figure class="ad-scph"><a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(KIND[f.kind])} attached to ${esc(x.ref)}"></a><figcaption><b>${esc(cap(KIND[f.kind]))}</b>${f.facesBlurred?`<span>${f.facesBlurred} face${f.facesBlurred>1?"s":""} blurred</span>`:""}</figcaption></figure>`:`<figure class="ad-scph"><a class="ad-pv ad-pv-none" href="${esc(f.url)}" target="_blank" rel="noopener">${ICO.doc}<span>Open ${esc(KIND[f.kind])}</span></a></figure>`).join("")}</div>`:""}${x.files.map(f=>reuseHTML(f.reuse)).join("")}
     ${x.resolution&&x.resolution.status!=="pending"?`<div class="ad-note"><span class="ad-lbl">Restaurant's action · proof ${x.resolution.status}</span>${esc(x.resolution.text)}</div>`:""}${resolutionHTML(x)}
     <dl class="ad-facts"><div><dt>Evidence</dt><dd>${x.evidence.length?esc(x.evidence.map(k=>KIND[k]).join(", ")):"None"}</dd></div><div><dt>Reporter</dt><dd>${age}<div class="ad-td-muted" style="margin-top:2px">${reporterHTML(x)}</div></dd></div><div><dt>Counts toward escalation</dt><dd>${esc(x.countsTowardEscalation)}</dd></div></dl>
     ${rej?`<div class="ad-reason"><label class="ad-select"><span>Reason</span><select id="admReason">${REJECT_REASONS.map(o=>`<option>${o}</option>`).join("")}</select></label><button class="ad-btn ad-btn-out" data-m="cancel" data-rep="${x.id}">Cancel</button><button class="ad-btn ad-btn-danger ad-btn-danger-solid" data-m="reject-go" data-rep="${x.id}">Reject report</button></div>`:""}
@@ -309,6 +321,30 @@ function activityHTML(){
     <div class="ad-surface ad-tbl"><table><thead><tr><th>When</th><th>What</th><th>On</th><th>By</th></tr></thead><tbody>${list.map(a=>`<tr><td class="ad-td-muted">${when(a.createdAt)}</td><td>${esc(ACTIONS[a.action]||a.action)}${a.data&&a.data.reason?` <span class="ad-td-muted">· ${esc(a.data.reason)}</span>`:""}</td><td class="ad-td-muted">${esc(a.entityType)} ${esc(String(a.entityId).slice(0,8))}</td><td class="ad-td-muted">${a.actorId?esc(a.actorId.slice(0,8)):"System"}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
+/* ---------- restaurant claims: the certificate against the licence number ---------- */
+function claimRow(c){
+  const rej=A.rejectingClaim===c.id,d=c.document;
+  const match=c.licenceMatches===true?`<span class="ad-badge ad-b-ok">Matches the number on record</span>`:c.licenceMatches===false?`<span class="ad-badge ad-b-no">Doesn't match the number on record</span>`:`<span class="ad-badge">No number on record: check it on FoSCoS</span>`;
+  return `<article class="ad-row ad-row-plain"><div class="ad-row-body">
+    <div class="ad-row-top"><div class="ad-row-id"><h3 class="ad-fn">${esc(c.restaurant.name)}</h3>
+      <div class="ad-meta"><span>${esc(c.restaurant.area)}, ${esc(c.restaurant.city)}</span><span>Claim #${c.id}</span><span>Sent ${new Date(c.sentAt).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit",timeZone:"Asia/Kolkata"})}</span></div></div>
+      <div class="ad-badges">${dueBadge(c)}${c.otherClaims?`<span class="ad-badge ad-b-more">${c.otherClaims} other claim${c.otherClaims>1?"s":""} for this place</span>`:""}</div></div>
+    <div class="ad-row-grid">
+      <section class="ad-sec"><h4 class="ad-lbl">Certificate</h4>
+        ${d.kind==="photo"?`<figure class="ad-scph ad-cert"><a href="${esc(d.url)}" target="_blank" rel="noopener"><img src="${esc(d.url)}" alt="Licence certificate for claim ${c.id}"></a></figure>`:`<a class="ad-btn ad-btn-out" href="${esc(d.url)}" target="_blank" rel="noopener">${ICO.doc}Open ${esc(d.name)}</a>`}
+        ${reuseHTML(c.reuse,"certificate")}</section>
+      <section class="ad-sec"><h4 class="ad-lbl">Check</h4><dl class="ad-dl">
+        <div class="ad-dl-wide"><dt>Licence number entered</dt><dd style="font-family:var(--mono)">${esc(c.licenceNumber)} ${match}</dd></div>
+        <div><dt>On record</dt><dd style="font-family:var(--mono)">${esc(c.restaurant.licenceNumber||"—")}</dd></div>
+        <div><dt>Claimant</dt><dd>${esc(c.claimant)} · verified ${c.numberAgeDays===0?"today":c.numberAgeDays+" days ago"}</dd></div></dl>
+        <p class="ad-muted">Check the certificate shows this licence number and this business. Numbers not on record: look them up on FSSAI's FoSCoS.</p></section>
+    </div>
+    ${rej?`<div class="ad-reason"><label class="ad-select"><span>Reason</span><select id="admClaimReason">${CLAIM_REASONS.map(o=>`<option>${esc(o)}</option>`).join("")}</select></label><button class="ad-btn ad-btn-out" data-cl="cancel" data-cid="${c.id}">Cancel</button><button class="ad-btn ad-btn-danger ad-btn-danger-solid" data-cl="reject-go" data-cid="${c.id}">Turn down claim</button></div>`
+      :`<div class="ad-acts"><span class="ad-td-muted">Approving opens the dashboard for this number and turns down other claims for the place.</span><span class="ad-acts-main"><button class="ad-btn ad-btn-danger" data-cl="reject" data-cid="${c.id}">Turn down</button><button class="ad-btn ad-btn-pri" data-cl="approve" data-cid="${c.id}">Approve claim</button></span></div>`}
+  </div></article>`;
+}
+const claimsHTML=()=>`<div class="ad-surface">${(A.data.claims||[]).map(claimRow).join("")||empty("No claims waiting","Every restaurant claim has been checked.")}</div>`;
+
 /* ---------- banned accounts ---------- */
 function bannedHTML(){
   const list=A.data.banned||[];
@@ -377,6 +413,13 @@ root.addEventListener("click",async e=>{
     const body=d==="reject-go"?{decision:"reject",reason:$("admReason").value}:{decision:d};
     A.rejecting=null;
     act(()=>api("POST",`/admin/reports/${id}/decision`,body),{accept:"Report accepted and published",["reject-go"]:"Report rejected",more:"Asked the reporter for more",coordinated:"Marked as coordinated",keep:"Kept published"}[d]);return}
+  const clm=t.closest("[data-cl]");
+  if(clm){const id=+clm.dataset.cid,d=clm.dataset.cl;
+    if(d==="reject"){A.rejectingClaim=id;render();const s=$("admClaimReason");if(s)s.focus();return}
+    if(d==="cancel"){A.rejectingClaim=null;render();return}
+    const body=d==="approve"?{decision:"approve"}:{decision:"reject",reason:$("admClaimReason").value};
+    A.rejectingClaim=null;
+    act(()=>api("POST",`/admin/claims/${id}/decision`,body),d==="approve"?"Claim approved. The owner's dashboard is open.":"Claim turned down. The owner has been told why.");return}
   const rs=t.closest("[data-res]");
   if(rs){const id=+rs.dataset.rep,d=rs.dataset.res;
     if(d==="reject"){A.rejectingRes=id;render();const s=$("admResReason");if(s)s.focus();return}

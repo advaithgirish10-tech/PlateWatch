@@ -30,7 +30,7 @@ describe("reports", () => {
   });
 
   it("won't let an owner report their own restaurant", async () => {
-    await t.call("POST", "/api/owner/claims", { cookie: owner, body: { restaurantId: 13, licenceNumber: "11526027001589" } });
+    await t.claimApproved(owner, admin, 13, "11526027001589");
     const r = await t.call("POST", "/api/reports", { cookie: owner, body: { restaurantId: 13, category: "Hygiene", share: true } });
     expect(r.statusCode).toBe(403);
   });
@@ -45,9 +45,13 @@ describe("restaurants imported without a licence", () => {
 
   it("are claimed with the owner's licence number, which then waits for a staff check", async () => {
     const other = await t.login("9844400004", { owner: true });
-    expect((await t.call("POST", "/api/owner/claims", { cookie: other, body: { restaurantId: id, licenceNumber: "123" } })).statusCode).toBe(400);
-    expect((await t.call("POST", "/api/owner/claims", { cookie: other, body: { restaurantId: id, licenceNumber: "11526027001589" } })).json().error).toBe("LICENCE_IN_USE");
-    expect((await t.call("POST", "/api/owner/claims", { cookie: other, body: { restaurantId: id, licenceNumber: "11526099999999" } })).statusCode).toBe(201);
+    expect((await t.requestClaim(other, id, "123")).statusCode).toBe(400);
+    expect((await t.requestClaim(other, id, "11526027001589")).json().error).toBe("LICENCE_IN_USE");
+    const c = await t.requestClaim(other, id, "11526099999999");
+    expect(c.statusCode).toBe(202);
+    /* the number goes on the profile only once staff approve the claim */
+    expect((await t.call("GET", `/api/restaurants/${id}`)).json().licenceNumber).toBeNull();
+    await t.call("POST", `/api/admin/claims/${c.json().claimId}/decision`, { cookie: admin, body: { decision: "approve" } });
     const p = (await t.call("GET", `/api/restaurants/${id}`)).json();
     expect(p).toMatchObject({ licenceNumber: "11526099999999", licenceStatus: null, source: "osm" });
     const queue = (await t.call("GET", "/api/admin/licence-checks", { cookie: admin })).json().items;

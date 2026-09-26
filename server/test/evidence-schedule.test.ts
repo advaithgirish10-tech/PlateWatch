@@ -14,7 +14,7 @@ beforeAll(async () => {
   owner = await t.login("9866600001", { owner: true });
   stranger = await t.login("9866600002", { owner: true });
   admin = await t.login("9866600003", { admin: true });
-  await t.call("POST", "/api/owner/claims", { cookie: owner, body: { restaurantId: HARBOUR.id, licenceNumber: HARBOUR.lic } });
+  await t.claimApproved(owner, admin, HARBOUR.id, HARBOUR.lic);
 });
 afterAll(async () => t.close());
 
@@ -97,7 +97,7 @@ describe("retention", () => {
   it("deletes photos after 4 months and PDFs after 2 years", async () => {
     const pdf = await submit("d1");
     const photo = await submit("s1");
-    const deps = { config: t.app.deps.config, db: t.db, storage: t.storage, otp: t.app.deps.otp, now: () => t.clock.now };
+    const deps = { ...t.app.deps, now: () => t.clock.now };
     const [photoRow] = await t.db.select().from(evidence).where(eq(evidence.id, photo));
 
     /* just under 4 months: kept (older photos from the tests above may go) */

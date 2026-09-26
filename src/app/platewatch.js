@@ -90,7 +90,7 @@ function go(p,arg,opt){
   if(p==="tracker")renderTracker();
   if(p==="biz")renderBiz(arg);
   if(p==="dash")openDash(arg||"overview");
-  if(p==="admin")ADM.show(arg||"verify");
+  if(p==="admin")ADM.show(arg||"claims");
   window.scrollTo(0,0);
 }
 addEventListener("hashchange",()=>{
@@ -254,13 +254,44 @@ const SIGNIN={
 async function signedIn(user){
   S.user={id:user.id,phone:localPhone(user.phone),name:user.name||"",wa:user.whatsappAlerts,role:user.role,owned:user.ownedRestaurantIds||[]};
   if(S.owner==null&&user.ownedRestaurantIds&&user.ownedRestaurantIds.length)S.owner=user.ownedRestaurantIds[0];
-  RP.registerNumber(S.user.phone);syncAuthBtn();
+  RP.registerNumber(S.user.phone);syncAuthBtn();loadBell();
   try{
     const [f,a]=await Promise.all([api("GET","/me/follows"),api("GET","/me/areas")]);
     S.follows=new Set(f.items.map(x=>x.id));S.areas=a.items;
   }catch(e){toast(e.message)}
 }
-function signedOut(){S.user=null;S.follows=new Set();S.areas=[];S.owner=null;S.ownerReports=null;consent=false;syncAuthBtn()}
+function signedOut(){S.user=null;S.follows=new Set();S.areas=[];S.owner=null;S.ownerReports=null;consent=false;syncAuthBtn();loadBell()}
+
+/* ---------- notifications: the bell. This tab's own: the user site's, or the owner dashboard's ---------- */
+const bell=$("bellBtn"),bellP=$("bellPanel");let bellItems=[];
+async function loadBell(){
+  if(!S.user){bell.hidden=true;bellP.hidden=true;return}
+  try{
+    const r=await api("GET","/me/notifications",undefined,{timeout:8000});
+    bellItems=r.items;bell.hidden=false;
+    const n=$("bellN");n.hidden=!r.unread;n.textContent=r.unread>9?"9+":String(r.unread);
+    bell.setAttribute("aria-label",`Notifications${r.unread?`, ${r.unread} unread`:""}`);
+    if(!bellP.hidden)drawBell();
+  }catch{/* offline: try again at the next check */}
+}
+function drawBell(){
+  bellP.innerHTML=`<div class="bellp-h"><b>Notifications</b>${bellItems.some(x=>!x.read)?`<button class="x" type="button" data-bell-all>Mark all read</button>`:""}</div>
+    ${bellItems.map(x=>`<button type="button" class="bellp-i${x.read?"":" unread"}" data-bell="${x.id}" data-link="${esc(x.link||"")}"><b>${esc(x.title)}</b><span>${esc(x.body)}</span><em>${since(x.createdAt)}</em></button>`).join("")||`<p class="muted bellp-none">Nothing yet. We'll tell you here when something happens.</p>`}`;
+}
+bell.onclick=()=>{bellP.hidden=!bellP.hidden;bell.setAttribute("aria-expanded",String(!bellP.hidden));if(!bellP.hidden){drawBell();loadBell()}};
+bellP.onclick=async e=>{
+  if(e.target.closest("[data-bell-all]")){await api("POST","/me/notifications/read",{}).catch(()=>{});loadBell();return}
+  const i=e.target.closest("[data-bell]");if(!i)return;
+  api("POST","/me/notifications/read",{ids:[+i.dataset.bell]}).then(loadBell,()=>{});
+  bellP.hidden=true;bell.setAttribute("aria-expanded","false");
+  const t=i.dataset.link&&parseHash(i.dataset.link);if(!t)return;
+  /* a claim approved since this tab signed in: pick up the new restaurant first */
+  if(MODE==="owner"&&(t.p==="dash"||t.p==="biz"))await refreshOwned();
+  go(t.p,t.arg);
+};
+document.addEventListener("click",e=>{if(!bellP.hidden&&!e.target.closest("#bellPanel,#bellBtn")){bellP.hidden=true;bell.setAttribute("aria-expanded","false")}});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!bellP.hidden){bellP.hidden=true;bell.setAttribute("aria-expanded","false");bell.focus()}});
+setInterval(loadBell,60_000);addEventListener("focus",loadBell);
 /* follow or unfollow right away, and undo it if the API says no */
 async function setFollow(id,on){
   on?S.follows.add(id):S.follows.delete(id);
@@ -611,7 +642,7 @@ function galleryHTML(list){
   const groups=CATS.map(c=>({c,items:list.filter(p=>REQ[p.requirementId]&&REQ[p.requirementId].cat===c.k)})).filter(g=>g.items.length);
   return `<div class="gal">${groups.map(({c,items})=>`<section class="gal-sec" aria-label="${esc(c.name)} photos"><div class="gal-h"><h3>${esc(c.name)}</h3><span class="muted">${items.length} photo${items.length===1?"":"s"}</span></div>
     <div class="gal-grid">${items.map(p=>`<figure class="gal-item"><a class="gal-btn" href="${esc(p.url)}" target="_blank" rel="noopener" aria-label="Open photo: ${esc(c.name)}, ${fmt(p.capturedOn)}"><img src="${esc(p.url)}" alt="" loading="lazy"></a>
-      <figcaption><span class="gal-area">${esc(c.name)}</span><span class="gal-meta"><span class="gtag${p.source==="spot"?" gtag-spot":""}">${p.source==="spot"?"Spot check":"Checkup"}</span><span>${fmt(p.capturedOn)}</span></span></figcaption></figure>`).join("")}</div></section>`).join("")}</div>`;
+      <figcaption><span class="gal-area">${esc(c.name)}</span><span class="gal-meta"><span class="gtag${p.source==="spot"?" gtag-spot":""}">${p.source==="spot"?"Spot check":"Checkup"}</span><span>${fmt(p.capturedOn)}</span></span>${p.facesBlurred?`<span class="gal-notes">Faces blurred</span>`:""}</figcaption></figure>`).join("")}</div></section>`).join("")}</div>`;
 }
 let detailSeq=0;
 /* late evidence, said plainly: it no longer counts, so the score is lower */
@@ -764,6 +795,24 @@ function renderBiz(preId){
   draw();
   document.getElementById("claimpanel").hidden=true;
   if(preId)startClaim(preId);
+  renderMyClaims();
+}
+/* restaurants this number owns now (a claim may have been approved since this tab signed in) */
+async function refreshOwned(){
+  try{const {user}=await api("GET","/me");if(!user||!S.user)return;S.user.owned=user.ownedRestaurantIds||[];if(S.owner==null&&S.user.owned.length)S.owner=S.user.owned[0]}catch{/* offline: keep what we had */}
+}
+/* the owner's claims and where each one is: waiting for PlateWatch, approved, or turned down with the reason */
+async function renderMyClaims(){
+  const el=document.getElementById("myClaims");
+  if(!S.user||MODE!=="owner"){el.hidden=true;return}
+  let items;try{items=(await api("GET","/owner/claims")).items}catch{el.hidden=true;return}
+  /* approved while this page was open: straight to the dashboard */
+  if(S.owner==null&&items.some(c=>c.status==="approved")){await refreshOwned();if(S.owner!=null&&S.page.p==="biz"){toast("Your claim is approved");go("dash","overview");return}}
+  const open=items.filter(c=>c.status!=="approved");
+  el.hidden=!open.length;
+  const when=t=>new Date(t).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"});
+  el.innerHTML=`<h2 class="h-mid">Your claims</h2>${open.map(c=>`<div class="myclaim myclaim-${c.status}"><div><b>${esc(c.restaurant.name)}</b><div class="muted">${esc(c.restaurant.area)}, ${esc(c.restaurant.city)} · sent ${when(c.sentAt)}</div></div>
+    <div>${c.status==="pending"?`<span class="st st-imp">Waiting for PlateWatch</span><div class="muted" style="font-size:13px;margin-top:4px">We check your certificate by ${when(c.reviewBy)}.</div>`:`<span class="st st-sus">Not approved</span><div class="muted" style="font-size:13px;margin-top:4px">${esc(c.reviewNote||"")}</div>`}</div></div>`).join("")}`;
 }
 document.getElementById("claimres").onclick=e=>{const b=e.target.closest("[data-claim]");if(b)startClaim(+b.dataset.claim)};
 /* claim with the licence number and a code to the owner's mobile; the API records who owns the restaurant */
@@ -771,21 +820,31 @@ async function startClaim(rid){
   let r=place(rid);
   if(!r||!r.lic){try{remember([await api("GET","/restaurants/"+rid)]);r=place(rid)}catch(e){toast(e.message);return}}
   const P=document.getElementById("claimpanel");P.hidden=false;const existing=!!(r.badge&&r.badge.level!=="none");
-  let lic="",ph="",busy=false;
+  let lic="",ph="",busy=false,doc=null;
   P.innerHTML=`<div class="eyebrow">${existing?"Owner log in":"Claim"} · step 1 of 2</div><h2 class="h-mid" style="margin-top:10px">${esc(r.name)}</h2>
-   <p class="muted" style="margin-top:8px">Enter the FSSAI licence number on your licence and the owner's mobile. We'll send a code to confirm.</p>
+   <p class="muted" style="margin-top:8px">${existing?"Enter the FSSAI licence number and the owner's mobile. We'll send a code to confirm.":"Enter the FSSAI licence number, add a copy of the licence certificate, and the owner's mobile. PlateWatch checks the certificate before your dashboard opens, usually within 24 hours."}</p>
    <form class="form" id="clf" style="margin-top:14px">
      <label for="cl-lic">FSSAI licence number</label><input class="input" id="cl-lic" inputmode="numeric" maxlength="14" required placeholder="14 digits" style="font-family:var(--mono)" aria-describedby="cl-lic-h">
      <p class="muted" id="cl-lic-h" style="font-size:13px;margin:-4px 0 4px">${r.lic?"The 14-digit number printed on your FSSAI licence or registration certificate.":"We don't have this restaurant's licence yet. Enter the 14-digit number on your FSSAI certificate; our team checks it on FSSAI's FoSCoS."}</p>
+     ${existing?"":`<label>FSSAI licence or registration certificate</label>
+     <div class="cl-doc"><label class="upl">Add PDF or photo<input type="file" id="cl-doc" accept="application/pdf,.pdf,image/jpeg,image/png,image/webp"></label><span class="muted" id="cl-doc-n">The certificate showing this licence number and your business name.</span></div>`}
      <label for="cl-ph">Owner's mobile</label><input class="input" id="cl-ph" inputmode="numeric" maxlength="10" required placeholder="10 digits" style="font-family:var(--mono)" value="${S.user?S.user.phone:""}">
      <p class="muted" style="font-size:13px;margin:-4px 0 4px">PlateWatch stores this number to manage your restaurant's profile. You can delete it anytime.</p>
      <div id="clerr"></div>
      <div><button class="pillbtn" type="submit" id="clSend">Send code</button></div></form>`;
   P.scrollIntoView({behavior:"smooth",block:"start"});
-  /* signed in as the owner's number: record the claim, then open the dashboard */
+  const docIn=document.getElementById("cl-doc");
+  if(docIn)docIn.onchange=()=>{doc=docIn.files[0]||null;document.getElementById("cl-doc-n").textContent=doc?doc.name:"The certificate showing this licence number and your business name."};
+  /* signed in as the owner's number: send the claim; a new one waits for PlateWatch, an existing owner goes straight in */
   const claim=async errEl=>{
     try{
-      const res=await api("POST","/owner/claims",{restaurantId:rid,licenceNumber:lic});
+      const uploadId=doc?await uploadFile(doc,"claim"):undefined;
+      const res=await api("POST","/owner/claims",{restaurantId:rid,licenceNumber:lic,...(uploadId?{uploadId}:{})});
+      if(res.status==="pending"){
+        P.innerHTML=`<div class="eyebrow">Claim sent</div><h2 class="h-mid" style="margin-top:10px">${esc(r.name)}</h2>
+          <p style="margin-top:10px">PlateWatch checks your certificate against the licence number, usually within 24 hours. We'll tell you here and on WhatsApp when your dashboard is open.</p>`;
+        renderMyClaims();return;
+      }
       S.user.owned=[...new Set([...(S.user.owned||[]),rid])];
       if(PROF[rid])PROF[rid].owner=fmtPhone(S.user.phone);
       else PROF[rid]={owner:fmtPhone(S.user.phone),level:"self",verifiedOn:null,adminNote:"",resp:{},ev:{},journey:[]};
@@ -800,6 +859,7 @@ async function startClaim(rid){
     /* checked here too, so a typo doesn't cost a code; the API checks it again */
     /* no licence on record (added from OpenStreetMap): the owner's is saved and our team checks it on FoSCoS */
     if(r.lic&&lic!==r.lic){err.innerHTML=errHTML("That licence number doesn't match our records for this restaurant.");return}
+    if(!existing&&!doc){err.innerHTML=errHTML("Add a PDF or photo of your FSSAI licence certificate.");return}
     if(!/^[6-9]\d{9}$/.test(ph)){err.innerHTML=errHTML("Enter a 10-digit mobile number starting with 6–9.");return}
     busy=true;btn.disabled=true;err.innerHTML="";
     if(S.user&&S.user.phone===ph){await claim(err);busy=false;btn.disabled=false;return}
@@ -1246,6 +1306,7 @@ api("GET","/me",undefined,{timeout:5000}).then(async({user})=>{
   if(p==="login"&&(S.after==="account"||S.after==="admin")){const nx=S.after;S.after=null;go(nx)}
   else if(p==="biz"&&S.owner!=null&&location.hash==="#restaurants")go("dash","overview");
   else if(p==="account")renderAccount();
+  else if(p==="biz")renderMyClaims();
   else if(p==="detail")renderDetail(S.page.arg);
 }).catch(()=>{/* API unreachable: browsing works signed out */});
 /* spot-check deadlines and countdowns run on the shared demo clock */

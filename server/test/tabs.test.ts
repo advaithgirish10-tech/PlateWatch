@@ -22,11 +22,11 @@ describe("user login and owner login are separate", () => {
   it("the dashboard needs the owner login, and reports need the user login", async () => {
     const user = await t.login("9877700002");
     const owner = await t.login("9877700002", { owner: true });
-    const claim = (cookie: string) => t.call("POST", "/api/owner/claims", { cookie, body: { restaurantId: HARBOUR.id, licenceNumber: HARBOUR.lic } });
-    const r = await claim(user);
+    const admin = await t.login("9877700009", { admin: true });
+    const r = await t.call("POST", "/api/owner/claims", { cookie: user, body: { restaurantId: HARBOUR.id, licenceNumber: HARBOUR.lic } });
     expect(r.statusCode).toBe(403);
     expect(r.json().message).toMatch(/owner login/);
-    expect((await claim(owner)).statusCode).toBe(201);
+    await t.claimApproved(owner, admin, HARBOUR.id, HARBOUR.lic);
     expect((await t.call("GET", `/api/owner/restaurants/${HARBOUR.id}/checkup`, { cookie: user })).statusCode).toBe(403);
     expect((await t.call("GET", `/api/owner/restaurants/${HARBOUR.id}/checkup`, { cookie: owner })).statusCode).toBe(200);
 

@@ -64,6 +64,13 @@
       "when": 1790406309813,
       "tag": "0008_report_resolutions",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790420985023,
+      "tag": "0009_faces_claims_fingerprints_notifications",
+      "breakpoints": true
     }
   ]
 }

@@ -8,6 +8,7 @@ import { isoDateIST, startOfDayIST } from "../../lib/dates.js";
 import { conflict, forbidden, notFound, tooMany } from "../../lib/errors.js";
 import { cleanText, idParam, parse } from "../../lib/validate.js";
 import type { Deps } from "../../types.js";
+import { recordFingerprint, type Fingerprint } from "../fingerprints/service.js";
 import { consumeUpload } from "../uploads/service.js";
 import { REPORT_CATEGORIES, STAGES, reportRef, stageOf } from "./dto.js";
 
@@ -33,6 +34,8 @@ const MoreEvidence = z.object({
 });
 
 const PER_OUTLET_DAYS = 7;
+
+interface StoredFile { storageKey: string; originalName: string; kind: "photo" | "video" | "bill" | "note"; facesBlurred: number; fingerprint: Fingerprint }
 
 /* the guardrails, checked again inside the write transaction */
 async function checkGuardrails(tx: Queryable, deps: Deps, userId: string, place: { restaurantId?: number; unlistedName?: string }) {
@@ -71,10 +74,10 @@ export async function reportRoutes(app: FastifyInstance) {
     const place = { restaurantId: body.restaurantId, unlistedName: body.unlisted?.name };
     /* fail fast before touching uploads, then again under a per-user lock */
     await checkGuardrails(db, deps, user.id, place);
-    const files: { storageKey: string; originalName: string; kind: "photo" | "video" | "bill" | "note" }[] = [];
+    const files: StoredFile[] = [];
     for (const e of body.evidence) {
       const f = await consumeUpload(deps, { uploadId: e.uploadId, userId: user.id, purpose: "report" });
-      files.push({ storageKey: f.storageKey, originalName: f.originalName, kind: e.kind ?? (f.kind === "document" ? "bill" : f.kind) });
+      files.push({ storageKey: f.storageKey, originalName: f.originalName, kind: e.kind ?? (f.kind === "document" ? "bill" : f.kind), facesBlurred: f.facesBlurred, fingerprint: f.fingerprint });
     }
     const created = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"report:" + user.id}))`);
@@ -94,7 +97,14 @@ export async function reportRoutes(app: FastifyInstance) {
         })
         .returning();
       if (files.length) {
-        await tx.insert(reportEvidence).values(files.map((f) => ({ reportId: rep!.id, kind: f.kind, storageKey: f.storageKey, originalName: f.originalName })));
+        const rows = await tx
+          .insert(reportEvidence)
+          .values(files.map((f) => ({ reportId: rep!.id, kind: f.kind, storageKey: f.storageKey, originalName: f.originalName, facesBlurred: f.facesBlurred })))
+          .returning({ id: reportEvidence.id });
+        /* a photo used before (in another report, or a restaurant's checkup) shows up for the moderator */
+        for (const [i, r] of rows.entries()) {
+          await recordFingerprint(tx, { source: "report", sourceId: r.id, restaurantId: body.restaurantId ?? null, userId: user.id, storageKey: files[i]!.storageKey, fingerprint: files[i]!.fingerprint });
+        }
       }
       return rep!;
     });
@@ -116,13 +126,19 @@ export async function reportRoutes(app: FastifyInstance) {
     const [rep] = await db.select().from(reports).where(and(eq(reports.id, id), eq(reports.userId, user.id))).limit(1);
     if (!rep) throw notFound("No such report.");
     if (rep.status !== "pending" || !rep.askMore) throw conflict("NOT_REQUESTED", "This report isn't waiting for more evidence.");
-    const files: { storageKey: string; originalName: string; kind: "photo" | "video" | "bill" | "note" }[] = [];
+    const files: StoredFile[] = [];
     for (const e of body.evidence) {
       const f = await consumeUpload(deps, { uploadId: e.uploadId, userId: user.id, purpose: "report" });
-      files.push({ storageKey: f.storageKey, originalName: f.originalName, kind: e.kind ?? (f.kind === "document" ? "bill" : f.kind) });
+      files.push({ storageKey: f.storageKey, originalName: f.originalName, kind: e.kind ?? (f.kind === "document" ? "bill" : f.kind), facesBlurred: f.facesBlurred, fingerprint: f.fingerprint });
     }
     await db.transaction(async (tx) => {
-      await tx.insert(reportEvidence).values(files.map((f) => ({ reportId: id, ...f })));
+      const rows = await tx
+        .insert(reportEvidence)
+        .values(files.map(({ fingerprint: _, ...f }) => ({ reportId: id, ...f })))
+        .returning({ id: reportEvidence.id });
+      for (const [i, r] of rows.entries()) {
+        await recordFingerprint(tx, { source: "report", sourceId: r.id, restaurantId: rep.restaurantId, userId: user.id, storageKey: files[i]!.storageKey, fingerprint: files[i]!.fingerprint });
+      }
       await tx.update(reports).set({ askMore: false }).where(eq(reports.id, id));
     });
     return reply.status(201).send({ ok: true });

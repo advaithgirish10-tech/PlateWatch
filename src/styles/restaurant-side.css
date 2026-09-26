@@ -215,3 +215,8 @@ html.rmk-lock{overflow:hidden}
 .resolve-btns{display:flex;flex-wrap:wrap;gap:8px}
 .resolve-acts{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:14px}
 .rep-gone{display:grid;place-items:center;width:120px;height:120px;border-radius:10px;border:1px dashed var(--rule);background:var(--soft);color:var(--grey);font-size:12px;text-align:center;padding:8px}
+
+/* owner claims: the certificate, and claims waiting for PlateWatch */
+.cl-doc{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:8px}
+.myclaims{padding-top:40px}
+.myclaim{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px 24px;padding:14px 0;border-bottom:1px solid var(--rule)}

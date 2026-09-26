@@ -1,6 +1,7 @@
 import type { Config } from "./config.js";
 import type { DB } from "./db/client.js";
 import type { OtpSender } from "./messaging/otp-sender.js";
+import type { FaceDetector } from "./storage/faces.js";
 import type { Storage } from "./storage/storage.js";
 
 export interface Deps {
@@ -8,6 +9,8 @@ export interface Deps {
   db: DB;
   storage: Storage;
   otp: OtpSender;
+  /* finds faces in uploaded photos so they can be blurred */
+  faces: FaceDetector;
   /* injectable clock, so tests can move time forward */
   now: () => Date;
 }

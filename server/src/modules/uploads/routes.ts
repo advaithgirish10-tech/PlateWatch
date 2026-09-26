@@ -5,7 +5,7 @@ import { parse } from "../../lib/validate.js";
 import { createUpload } from "./service.js";
 
 const Body = z.object({
-  purpose: z.enum(["evidence", "report", "response"]),
+  purpose: z.enum(["evidence", "report", "response", "claim"]),
   contentType: z.string().max(100),
   size: z.number().int().positive(),
   filename: z.string().min(1).max(200),

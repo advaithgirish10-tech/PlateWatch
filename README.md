@@ -94,6 +94,8 @@ Entry points: the Report page, every profile, search no-results ("Report a probl
 
 **Reporting on the site.** Every "Report" and "Write a report" button (profile, Report page, homepage, My alerts, search with no results) opens the "Write your Remark" form. Without a restaurant it first asks which one: search, or name an unlisted place with its area.
 
+**Claims, faces, reused photos, notifications.** Claiming a restaurant needs the licence number *and* a copy of the FSSAI licence certificate, and staff approve it (Admin → Restaurant claims) before the dashboard opens. Every uploaded photo has faces found and pixelated before it's stored. A photo or PDF that matches an earlier one is flagged for reviewers with the earlier file beside it. The bell in the header is each tab's inbox; the same messages go out on WhatsApp once the account is set up.
+
 **How a report travels.** A diner sends it → PlateWatch checks it within 24 hours (Admin → Community reports) → if accepted and the diner agreed to share it, it appears in the restaurant's dashboard (Reports tab) and on the public profile for 2 weeks, in full, with "Reported 3 days ago". The bill photo stays private. The owner can **Mark as resolved** with a comment and proof (a live camera photo or a PDF). PlateWatch checks that proof within 24 hours; once approved it shows under the report as "Restaurant took action". Rejected or false reports never appear.
 
 **Two tabs, two logins.** The restaurant dashboard always opens in its own browser tab ("For restaurants", "Restaurant owner login"), marked by a black "Restaurant owner tab" bar. It has its own login, so someone can be signed in as a user in one tab and as an owner in the other. Report buttons in the owner tab open the user site in a new tab.

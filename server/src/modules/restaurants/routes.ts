@@ -240,7 +240,7 @@ export async function restaurantRoutes(app: FastifyInstance) {
         requirementId: p.requirementId,
         capturedOn: p.capturedOn,
         source: p.source,
-        facesBlurred: p.containsPeople,
+        facesBlurred: p.facesBlurred > 0,
         url: await deps.storage.signedGetUrl(p.storageKey, 3600),
       })),
     );

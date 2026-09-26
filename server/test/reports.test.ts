@@ -11,7 +11,7 @@ beforeAll(async () => {
   /* the same person's user login, in another tab */
   ownerAsUser = await t.login("9822200002");
   admin = await t.login("9822200003", { admin: true });
-  await t.call("POST", "/api/owner/claims", { cookie: owner, body: { restaurantId: 13, licenceNumber: "11526027001589" } });
+  await t.claimApproved(owner, admin, 13, "11526027001589");
 });
 afterAll(async () => t.close());
 

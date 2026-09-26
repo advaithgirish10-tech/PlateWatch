@@ -43,11 +43,19 @@ export async function setupApp(opts: { sample?: boolean; gallery?: boolean; repo
   const clock = { now: new Date("2026-09-25T06:30:00Z") };
   const sent: { phone: string; code: string }[] = [];
   const storage = memoryStorage(() => clock.now);
+  /* a stand-in face detector: tests set the faces it "finds", or make it fail */
+  const faces = { boxes: [] as { x: number; y: number; width: number; height: number }[], fail: false };
   const app = await buildApp({
     config,
     db,
     storage,
     otp: { send: async (phone, code) => (sent.push({ phone, code }), "console") },
+    faces: {
+      detect: async () => {
+        if (faces.fail) throw new Error("detector down");
+        return faces.boxes;
+      },
+    },
     now: () => clock.now,
   }, { rateLimit: false });
 
@@ -81,7 +89,7 @@ export async function setupApp(opts: { sample?: boolean; gallery?: boolean; repo
   }
 
   /* upload a file the way the browser does: ask for a URL, PUT the bytes to it */
-  async function upload(cookie: string, purpose: "evidence" | "report" | "response", body: Buffer, contentType: string, filename = "file") {
+  async function upload(cookie: string, purpose: "evidence" | "report" | "response" | "claim", body: Buffer, contentType: string, filename = "file") {
     const r = await call("POST", "/api/uploads", { cookie, body: { purpose, contentType, size: body.length, filename } });
     if (r.statusCode !== 201) return { res: r, uploadId: null as string | null };
     const { uploadId, url, headers } = r.json();
@@ -90,13 +98,38 @@ export async function setupApp(opts: { sample?: boolean; gallery?: boolean; repo
     return { res: r, uploadId: uploadId as string };
   }
 
-  return { app, db, pool, storage, sent, clock, advance, lastCode, call, login, upload, close: async () => (await app.close(), await pool.end()) };
+  /* claim a restaurant the way an owner does: the licence number and a copy of the certificate */
+  async function requestClaim(cookie: string, restaurantId: number, licenceNumber: string) {
+    const { uploadId } = await upload(cookie, "claim", samplePdf(), "application/pdf", "fssai-licence.pdf");
+    return call("POST", "/api/owner/claims", { cookie, body: { restaurantId, licenceNumber, uploadId } });
+  }
+  /* …and have PlateWatch staff approve it */
+  async function claimApproved(cookie: string, adminCookie: string, restaurantId: number, licenceNumber: string) {
+    const r = await requestClaim(cookie, restaurantId, licenceNumber);
+    if (r.statusCode !== 202) throw new Error(`claim failed: ${r.body}`);
+    const d = await call("POST", `/api/admin/claims/${r.json().claimId}/decision`, { cookie: adminCookie, body: { decision: "approve" } });
+    if (d.statusCode !== 204) throw new Error(`approval failed: ${d.body}`);
+    return r;
+  }
+
+  return { app, db, pool, storage, faces, sent, clock, requestClaim, claimApproved, advance, lastCode, call, login, upload, close: async () => (await app.close(), await pool.end()) };
 }
 
 export type T = Awaited<ReturnType<typeof setupApp>>;
 
 /* a minimal PDF: the server checks the file really starts like one */
 export const samplePdf = () => Buffer.from("%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n");
+
+/* a photo with detail, different for each seed; the same seed gives the same picture */
+export async function texturedJpeg(seed: number, size = 96) {
+  const px = Buffer.alloc(size * size * 3);
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++) {
+      const v = (Math.sin((x + seed * 7) / (3 + (seed % 5))) + Math.cos((y * (seed % 3 + 1)) / 4) + Math.sin((x * y + seed * 13) / 50)) * 42 + 128;
+      px.set([v, (v + seed * 31) % 256, 255 - v], (y * size + x) * 3);
+    }
+  return sharp(px, { raw: { width: size, height: size, channels: 3 } }).jpeg().toBuffer();
+}
 
 /* a real JPEG carrying EXIF with a GPS position, to prove uploads strip it */
 export async function jpegWithGps() {

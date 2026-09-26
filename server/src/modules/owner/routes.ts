@@ -2,19 +2,22 @@ import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireOwnerLogin } from "../../auth/sessions.js";
-import { evidence, reportEvidence, reports, responses, restaurantOwners, restaurantResponses, restaurants, uploads } from "../../db/schema.js";
+import { claimRequests, evidence, reportEvidence, reports, responses, restaurantOwners, restaurantResponses, restaurants, uploads } from "../../db/schema.js";
 import { audit } from "../../lib/audit.js";
 import { daysBetween, isoDateIST } from "../../lib/dates.js";
 import { badRequest, conflict, forbidden, notFound } from "../../lib/errors.js";
 import { cleanText, idParam, parse } from "../../lib/validate.js";
 import { publicUntil, reportRef } from "../reports/dto.js";
 import { isOpenAction } from "../restaurants/service.js";
+import { recordFingerprint } from "../fingerprints/service.js";
+import { claimRequested } from "../notifications/events.js";
 import { consumeUpload } from "../uploads/service.js";
 import { loadCheckups } from "./checkup-data.js";
 import { badge, freshness, grade, score } from "./score.js";
 
 const PDF_ONLY = new Set(["pest", "docs"]);
-const Claim = z.object({ restaurantId: z.number().int().positive(), licenceNumber: z.string().max(20) });
+/* the licence number, and the FSSAI licence or registration certificate that shows it (a PDF or photo) */
+const Claim = z.object({ restaurantId: z.number().int().positive(), licenceNumber: z.string().max(20), uploadId: z.uuid().optional() });
 const AnswerBody = z.object({ answer: z.enum(["yes", "no", "na"]) });
 const EvidenceBody = z.object({ requirementId: z.string().max(10), uploadId: z.uuid(), note: cleanText(500).optional() });
 /* "action taken": what the restaurant did, with proof (a live photo or a PDF) */
@@ -37,7 +40,10 @@ export async function ownerRoutes(app: FastifyInstance) {
     return { me, owner: o };
   }
 
-  /* claim with the licence number; the signed-in, OTP-verified number becomes the owner's */
+  /*
+   * Claim with the licence number and the licence certificate. PlateWatch staff compare the two and approve the claim
+   * (within 24 hours) before the dashboard opens: a licence number alone is printed on the profile for anyone to read.
+   */
   app.post("/api/owner/claims", { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } }, async (req, reply) => {
     const me = requireOwnerLogin(req);
     const body = parse(Claim, req.body);
@@ -57,12 +63,48 @@ export async function ownerRoutes(app: FastifyInstance) {
       if (existing.userId === me.id) return reply.status(200).send({ restaurantId: r.id, level: existing.level, existing: true });
       throw conflict("ALREADY_CLAIMED", "This restaurant is already claimed by another number. If you're the owner, contact support to transfer it.");
     }
-    await db.transaction(async (tx) => {
-      await tx.insert(restaurantOwners).values({ restaurantId: r.id, userId: me.id, level: "self" });
-      if (!r.licenceNumber) await tx.update(restaurants).set({ licenceNumber: lic, licenceStatus: null, licenceCheckedOn: null, updatedAt: deps.now() }).where(eq(restaurants.id, r.id));
-      await audit(tx, { actorId: me.id, action: "owner.claim", entityType: "restaurant", entityId: r.id });
+    const [mine] = await db
+      .select({ id: claimRequests.id })
+      .from(claimRequests)
+      .where(and(eq(claimRequests.restaurantId, r.id), eq(claimRequests.userId, me.id), eq(claimRequests.status, "pending")))
+      .limit(1);
+    if (mine) throw conflict("CLAIM_PENDING", "Your claim for this restaurant is waiting for PlateWatch to check it.");
+    if (!body.uploadId) throw badRequest("Add a photo or PDF of your FSSAI licence or registration certificate.", { fields: { uploadId: "required" } });
+    const f = await consumeUpload(deps, { uploadId: body.uploadId, userId: me.id, purpose: "claim" });
+    const claim = await db.transaction(async (tx) => {
+      const [c] = await tx
+        .insert(claimRequests)
+        .values({ restaurantId: r.id, userId: me.id, licenceNumber: lic, storageKey: f.storageKey, originalName: f.originalName, contentType: f.contentType, createdAt: deps.now() })
+        .returning();
+      /* one certificate used to claim two restaurants shows up for staff */
+      await recordFingerprint(tx, { source: "claim", sourceId: c!.id, restaurantId: r.id, userId: me.id, storageKey: f.storageKey, fingerprint: f.fingerprint });
+      await audit(tx, { actorId: me.id, action: "claim.request", entityType: "restaurant", entityId: r.id, data: { claimId: c!.id } });
+      await claimRequested(tx, c!.id);
+      return c!;
     });
-    return reply.status(201).send({ restaurantId: r.id, level: "self", existing: false });
+    return reply.status(202).send({ claimId: claim.id, restaurantId: r.id, status: "pending" });
+  });
+
+  /* my claims and where each one is */
+  app.get("/api/owner/claims", async (req) => {
+    const me = requireOwnerLogin(req);
+    const rows = await db
+      .select({ c: claimRequests, r: restaurants })
+      .from(claimRequests)
+      .innerJoin(restaurants, eq(restaurants.id, claimRequests.restaurantId))
+      .where(eq(claimRequests.userId, me.id))
+      .orderBy(desc(claimRequests.createdAt))
+      .limit(20);
+    return {
+      items: rows.map(({ c, r }) => ({
+        id: c.id,
+        restaurant: { id: r.id, name: r.name, area: r.area, city: r.city },
+        status: c.status,
+        reviewNote: c.reviewNote,
+        sentAt: c.createdAt.toISOString(),
+        reviewBy: c.status === "pending" ? new Date(c.createdAt.getTime() + 86_400_000).toISOString() : null,
+      })),
+    };
   });
 
   app.get("/api/owner/restaurants", async (req) => {
@@ -182,9 +224,13 @@ export async function ownerRoutes(app: FastifyInstance) {
           capturedOn: today(),
           note: body.note || null,
           submittedBy: me.id,
+          facesBlurred: f.facesBlurred,
           createdAt: deps.now(),
         })
         .returning();
+      /* the same photo or PDF as before (last cycle's kitchen photo, another restaurant's certificate): flag it for the reviewer */
+      const reused = await recordFingerprint(tx, { source: "evidence", sourceId: ev!.id, restaurantId: id, userId: me.id, storageKey: f.storageKey, fingerprint: f.fingerprint });
+      if (reused) await tx.update(evidence).set({ flagged: true }).where(eq(evidence.id, ev!.id));
       /* uploading evidence for an unanswered requirement answers it "yes" */
       await tx.insert(responses).values({ restaurantId: id, requirementId: body.requirementId, answer: "yes", updatedBy: me.id }).onConflictDoNothing();
       await audit(tx, { actorId: me.id, action: "evidence.submit", entityType: "evidence", entityId: ev!.id, data: { restaurantId: id, requirementId: body.requirementId } });
@@ -289,9 +335,10 @@ export async function ownerRoutes(app: FastifyInstance) {
     if (!u) throw conflict("UPLOAD_UNAVAILABLE", "That upload can't be used. Upload the file again.");
     if (!u.type.startsWith("image/") && u.type !== "application/pdf") throw badRequest("Proof must be a photo or a PDF.", { code: "WRONG_EVIDENCE_TYPE" });
     const f = await consumeUpload(deps, { uploadId: body.uploadId, userId: me.id, purpose: "response" });
-    const row = { text: body.text, storageKey: f.storageKey, originalName: f.originalName, proofKind: f.kind === "document" ? ("document" as const) : ("photo" as const), status: "pending" as const, reviewNote: null, reviewedBy: null, reviewedAt: null, respondedBy: me.id, createdAt: deps.now() };
+    const row = { text: body.text, storageKey: f.storageKey, originalName: f.originalName, proofKind: f.kind === "document" ? ("document" as const) : ("photo" as const), facesBlurred: f.facesBlurred, status: "pending" as const, reviewNote: null, reviewedBy: null, reviewedAt: null, respondedBy: me.id, createdAt: deps.now() };
     await db.transaction(async (tx) => {
       await tx.insert(restaurantResponses).values({ reportId, ...row }).onConflictDoUpdate({ target: restaurantResponses.reportId, set: row });
+      await recordFingerprint(tx, { source: "proof", sourceId: reportId, restaurantId: id, userId: me.id, storageKey: f.storageKey, fingerprint: f.fingerprint });
       await audit(tx, { actorId: me.id, action: "report.respond", entityType: "report", entityId: reportId, data: { proof: row.proofKind, again: !!already } });
     });
     if (already?.storageKey) await deps.storage.delete(already.storageKey).catch(() => {});

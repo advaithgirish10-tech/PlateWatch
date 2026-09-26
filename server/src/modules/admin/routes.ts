@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireAdmin } from "../../auth/sessions.js";
 import {
   auditLog,
+  claimRequests,
   evidence,
   reportEvidence,
   reports,
@@ -21,6 +22,8 @@ import { badRequest, conflict, notFound } from "../../lib/errors.js";
 import { displayPhone } from "../../lib/phone.js";
 import { cleanText, idParam, parse, uuidParam } from "../../lib/validate.js";
 import { loadCatalog, loadCheckups } from "../owner/checkup-data.js";
+import { reuseFor, type Reuse } from "../fingerprints/service.js";
+import { claimsDecided, evidenceDecided, officialAction, reportDecided, resolutionDecided, verificationDecided } from "../notifications/events.js";
 import { score } from "../owner/score.js";
 import { reportRef } from "../reports/dto.js";
 import { addEnforcementAction, likeEscape } from "../restaurants/service.js";
@@ -36,6 +39,10 @@ const EvidenceQuery = z.object({
 });
 const EvidenceDecision = z.object({ decision: z.enum(["verified", "rejected", "more"]), reviewNote: cleanText(1000).optional() });
 const EvidencePatch = z.object({ flagged: z.boolean().optional(), reviewNote: cleanText(1000).optional(), containsPeople: z.boolean().optional() });
+const ClaimDecision = z
+  .object({ decision: z.enum(["approve", "reject"]), reason: cleanText(200).optional() })
+  .refine((b) => b.decision !== "reject" || !!b.reason, { message: "Say why the claim can't be approved.", path: ["reason"] });
+
 const ResolutionDecision = z
   .object({ decision: z.enum(["approve", "reject"]), reason: cleanText(200).optional() })
   .refine((b) => b.decision !== "reject" || !!b.reason, { message: "Say why the proof isn't enough.", path: ["reason"] });
@@ -101,7 +108,7 @@ export async function adminRoutes(app: FastifyInstance) {
       .leftJoin(users, eq(users.id, evidence.submittedBy));
   type EvidenceRow = Awaited<ReturnType<ReturnType<typeof evidenceRows>["where"]>>[number];
   /* short-lived signed links, for photos, PDFs and videos alike */
-  const evidenceItem = async ({ e, r, q, cat, phone, level }: EvidenceRow) => ({
+  const evidenceItem = async ({ e, r, q, cat, phone, level }: EvidenceRow, reuse?: Reuse) => ({
     id: e.id,
     restaurant: { id: r.id, name: r.name, area: r.area, city: r.city },
     requirement: { id: q.id, text: q.text, weight: q.weight, critical: q.critical, category: cat.name },
@@ -110,6 +117,9 @@ export async function adminRoutes(app: FastifyInstance) {
     status: e.status,
     flagged: e.flagged,
     containsPeople: e.containsPeople,
+    facesBlurred: e.facesBlurred,
+    /* looks like a file sent before: shown next to it for the reviewer to compare */
+    reuse: reuse ?? null,
     capturedOn: e.capturedOn,
     validUntilDays: cat.expiryDays - daysBetween(e.capturedOn, today()),
     /* every upload is reviewed within 24 hours of arriving */
@@ -142,7 +152,8 @@ export async function adminRoutes(app: FastifyInstance) {
       .innerJoin(requirementCategories, eq(requirementCategories.key, requirements.categoryKey))
       .where(and(ne(evidence.status, "rejected"), sql`(${evidence.capturedOn} + ${requirementCategories.expiryDays}) - ${today()}::date between 0 and 7`));
     const [lc] = await db.select({ n: count() }).from(restaurants).where(needsLicenceCheck());
-    return { pendingEvidence: ev?.n ?? 0, verificationRequests: vr?.n ?? 0, reportsToModerate: rp?.n ?? 0, expiringSoon: ex?.n ?? 0, licenceChecks: lc?.n ?? 0 };
+    const [cl] = await db.select({ n: count() }).from(claimRequests).where(eq(claimRequests.status, "pending"));
+    return { pendingEvidence: ev?.n ?? 0, verificationRequests: vr?.n ?? 0, reportsToModerate: rp?.n ?? 0, expiringSoon: ex?.n ?? 0, licenceChecks: lc?.n ?? 0, claims: cl?.n ?? 0 };
   });
 
   /* the checkup as staff edit it: categories with their expiry, requirements with weight and critical flag */
@@ -208,6 +219,7 @@ export async function adminRoutes(app: FastifyInstance) {
         )
         .where(eq(restaurantOwners.restaurantId, id));
       await audit(tx, { actorId: admin.id, action: `verification.${decision}`, entityType: "restaurant", entityId: id });
+      await verificationDecided(tx, id, decision);
     });
     return reply.status(204).send();
   });
@@ -237,7 +249,8 @@ export async function adminRoutes(app: FastifyInstance) {
       .innerJoin(restaurants, eq(restaurants.id, evidence.restaurantId))
       .innerJoin(requirements, eq(requirements.id, evidence.requirementId))
       .where(and(...where));
-    return { total: total?.n ?? 0, items: await Promise.all(rows.map(evidenceItem)) };
+    const reuse = await reuseFor(db, deps.storage, "evidence", rows.map((x) => x.e.id));
+    return { total: total?.n ?? 0, items: await Promise.all(rows.map((x) => evidenceItem(x, reuse.get(x.e.id)))) };
   });
 
   /* one item for the review panel: the file, earlier submissions for the same requirement, the restaurant's score */
@@ -252,7 +265,7 @@ export async function adminRoutes(app: FastifyInstance) {
       .orderBy(desc(evidence.capturedOn));
     const sc = score((await loadCheckups(db, [row.r.id], today())).get(row.r.id)!.checkup);
     return {
-      ...(await evidenceItem(row)),
+      ...(await evidenceItem(row, (await reuseFor(db, deps.storage, "evidence", [id])).get(id))),
       validUntil: addDays(row.e.capturedOn, row.cat.expiryDays),
       expiryDays: row.cat.expiryDays,
       history,
@@ -272,6 +285,7 @@ export async function adminRoutes(app: FastifyInstance) {
         .returning({ id: evidence.id, restaurantId: evidence.restaurantId });
       if (!e) return null;
       await audit(tx, { actorId: admin.id, action: `evidence.${body.decision}`, entityType: "evidence", entityId: id, data: { restaurantId: e.restaurantId } });
+      await evidenceDecided(tx, id, body.decision, body.reviewNote);
       return e;
     });
     if (!done) throw notFound("No such evidence.");
@@ -313,6 +327,8 @@ export async function adminRoutes(app: FastifyInstance) {
           .groupBy(reports.userId)
       : [];
     const links = new Map(await Promise.all(ev.map(async (e) => [e.id, await deps.storage.signedGetUrl(e.storageKey, 900)] as const)));
+    const reuseReport = await reuseFor(db, deps.storage, "report", ev.map((e) => e.id));
+    const reuseProof = await reuseFor(db, deps.storage, "proof", rows.filter((x) => x.resp).map((x) => x.rep.id));
     const proofLinks = new Map(await Promise.all(rows.filter((x) => x.resp?.storageKey).map(async (x) => [x.rep.id, await deps.storage.signedGetUrl(x.resp!.storageKey!, 900)] as const)));
     const now = deps.now();
     return {
@@ -339,7 +355,7 @@ export async function adminRoutes(app: FastifyInstance) {
           share: rep.share,
           flaggedByOwner: rep.flaggedByOwner,
           evidence: kinds,
-          files: ev.filter((e) => e.reportId === rep.id).map((e) => ({ kind: e.kind, name: e.originalName, url: links.get(e.id)! })),
+          files: ev.filter((e) => e.reportId === rep.id).map((e) => ({ kind: e.kind, name: e.originalName, url: links.get(e.id)!, facesBlurred: e.facesBlurred, reuse: reuseReport.get(e.id) ?? null })),
           response: resp?.text ?? null,
           /* the owner says it's fixed: check the proof within 24 hours of it arriving */
           resolution: resp
@@ -348,7 +364,7 @@ export async function adminRoutes(app: FastifyInstance) {
                 status: resp.status,
                 sentAt: resp.createdAt.toISOString(),
                 verifyBy: new Date(resp.createdAt.getTime() + DAY).toISOString(),
-                proof: resp.storageKey ? { kind: resp.proofKind ?? "photo", name: resp.originalName, url: proofLinks.get(rep.id)! } : null,
+                proof: resp.storageKey ? { kind: resp.proofKind ?? "photo", name: resp.originalName, url: proofLinks.get(rep.id)!, facesBlurred: resp.facesBlurred, reuse: reuseProof.get(String(rep.id)) ?? null } : null,
               }
             : null,
           numberAgeDays,
@@ -366,6 +382,77 @@ export async function adminRoutes(app: FastifyInstance) {
     };
   });
 
+  /* ---------- restaurant claims: compare the certificate with the licence number, then approve or turn down ---------- */
+  app.get("/api/admin/claims", async () => {
+    const rows = await db
+      .select({ c: claimRequests, r: restaurants, phone: users.phone, verifiedAt: users.phoneVerifiedAt })
+      .from(claimRequests)
+      .innerJoin(restaurants, eq(restaurants.id, claimRequests.restaurantId))
+      .innerJoin(users, eq(users.id, claimRequests.userId))
+      .where(eq(claimRequests.status, "pending"))
+      .orderBy(asc(claimRequests.createdAt))
+      .limit(200);
+    const reuse = await reuseFor(db, deps.storage, "claim", rows.map((x) => x.c.id));
+    const now = deps.now();
+    return {
+      items: await Promise.all(
+        rows.map(async ({ c, r, phone, verifiedAt }) => ({
+          id: c.id,
+          restaurant: { id: r.id, name: r.name, area: r.area, city: r.city, licenceNumber: r.licenceNumber, source: r.source },
+          licenceNumber: c.licenceNumber,
+          /* the number the owner typed, against the one on record (none for places imported from OpenStreetMap) */
+          licenceMatches: r.licenceNumber ? r.licenceNumber === c.licenceNumber : null,
+          claimant: displayPhone(phone),
+          numberAgeDays: Math.floor((now.getTime() - verifiedAt.getTime()) / DAY),
+          document: { name: c.originalName, kind: c.contentType === "application/pdf" ? "document" : "photo", url: await deps.storage.signedGetUrl(c.storageKey, 900) },
+          otherClaims: rows.filter((x) => x.c.restaurantId === c.restaurantId && x.c.id !== c.id).length,
+          reuse: reuse.get(String(c.id)) ?? null,
+          sentAt: c.createdAt.toISOString(),
+          verifyBy: new Date(c.createdAt.getTime() + DAY).toISOString(),
+        })),
+      ),
+    };
+  });
+
+  app.post("/api/admin/claims/:id/decision", async (req, reply) => {
+    const admin = requireAdmin(req);
+    const { id } = parse(idParam, req.params);
+    const body = parse(ClaimDecision, req.body);
+    const [c] = await db.select().from(claimRequests).where(eq(claimRequests.id, id)).limit(1);
+    if (!c) throw notFound("No such claim.");
+    if (c.status !== "pending") throw conflict("ALREADY_DECIDED", "This claim has already been decided.");
+    const decided = { reviewedBy: admin.id, reviewedAt: deps.now() };
+    if (body.decision === "reject") {
+      await db.transaction(async (tx) => {
+        await tx.update(claimRequests).set({ status: "rejected", reviewNote: body.reason!, ...decided }).where(eq(claimRequests.id, id));
+        await audit(tx, { actorId: admin.id, action: "claim.reject", entityType: "restaurant", entityId: c.restaurantId, data: { claimId: id, reason: body.reason } });
+        await claimsDecided(tx, [id]);
+      });
+      return reply.status(204).send();
+    }
+    await db.transaction(async (tx) => {
+      const [r] = await tx.select().from(restaurants).where(eq(restaurants.id, c.restaurantId)).for("update").limit(1);
+      const [owner] = await tx.select().from(restaurantOwners).where(eq(restaurantOwners.restaurantId, c.restaurantId)).limit(1);
+      if (owner) throw conflict("ALREADY_CLAIMED", "This restaurant already has an owner on PlateWatch.");
+      if (!r!.licenceNumber) {
+        const [taken] = await tx.select({ id: restaurants.id }).from(restaurants).where(eq(restaurants.licenceNumber, c.licenceNumber)).limit(1);
+        if (taken) throw conflict("LICENCE_IN_USE", "That licence number now belongs to another restaurant on PlateWatch.");
+        await tx.update(restaurants).set({ licenceNumber: c.licenceNumber, licenceStatus: null, licenceCheckedOn: null, updatedAt: deps.now() }).where(eq(restaurants.id, r!.id));
+      }
+      await tx.insert(restaurantOwners).values({ restaurantId: c.restaurantId, userId: c.userId, level: "self" });
+      await tx.update(claimRequests).set({ status: "approved", ...decided }).where(eq(claimRequests.id, id));
+      /* one owner per restaurant: anyone else waiting is told */
+      const others = await tx
+        .update(claimRequests)
+        .set({ status: "rejected", reviewNote: "Another claim for this restaurant was approved.", ...decided })
+        .where(and(eq(claimRequests.restaurantId, c.restaurantId), eq(claimRequests.status, "pending")))
+        .returning({ id: claimRequests.id });
+      await audit(tx, { actorId: admin.id, action: "owner.claim", entityType: "restaurant", entityId: c.restaurantId, data: { claimId: id } });
+      await claimsDecided(tx, [id, ...others.map((o) => o.id)]);
+    });
+    return reply.status(204).send();
+  });
+
   /* the restaurant's "action taken": approve the proof (it goes public with the report) or turn it down with a reason */
   app.post("/api/admin/reports/:id/resolution", async (req, reply) => {
     const admin = requireAdmin(req);
@@ -380,6 +467,7 @@ export async function adminRoutes(app: FastifyInstance) {
         .set({ status: body.decision === "approve" ? "approved" : "rejected", reviewNote: body.reason ?? null, reviewedBy: admin.id, reviewedAt: deps.now() })
         .where(eq(restaurantResponses.reportId, id));
       await audit(tx, { actorId: admin.id, action: `resolution.${body.decision}`, entityType: "report", entityId: id, data: body.reason ? { reason: body.reason } : undefined });
+      await resolutionDecided(tx, id, body.decision, body.reason);
     });
     return reply.status(204).send();
   });
@@ -408,6 +496,7 @@ export async function adminRoutes(app: FastifyInstance) {
     await db.transaction(async (tx) => {
       await tx.update(reports).set(set).where(eq(reports.id, id));
       await audit(tx, { actorId: admin.id, action: `report.${body.decision}`, entityType: "report", entityId: id, data: body.reason ? { reason: body.reason } : undefined });
+      await reportDecided(tx, id, body.decision, body.reason);
     });
     return reply.status(204).send();
   });
@@ -541,7 +630,11 @@ export async function adminRoutes(app: FastifyInstance) {
     const body = parse(Action, req.body);
     const [r] = await db.select({ id: restaurants.id }).from(restaurants).where(eq(restaurants.id, id)).limit(1);
     if (!r) throw notFound("No restaurant with that ID.");
-    const row = await db.transaction((tx) => addEnforcementAction(tx, { restaurantId: id, ...body, actorId: admin.id }));
+    const row = await db.transaction(async (tx) => {
+      const a = await addEnforcementAction(tx, { restaurantId: id, ...body, actorId: admin.id });
+      await officialAction(tx, id, a.id, body.type, body.summary);
+      return a;
+    });
     return reply.status(201).send({ id: row.id });
   });
 

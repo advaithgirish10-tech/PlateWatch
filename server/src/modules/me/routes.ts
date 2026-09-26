@@ -1,8 +1,8 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { clearSessionCookie, requireUser } from "../../auth/sessions.js";
-import { follows, otpChallenges, restaurants, users, watchedAreas } from "../../db/schema.js";
+import { follows, notifications, otpChallenges, restaurants, users, watchedAreas } from "../../db/schema.js";
 import { audit } from "../../lib/audit.js";
 import { isoDateIST } from "../../lib/dates.js";
 import { notFound } from "../../lib/errors.js";
@@ -13,6 +13,7 @@ import { userDto } from "./dto.js";
 
 const Patch = z.object({ name: cleanText(60).optional(), whatsappAlerts: z.boolean().optional() });
 const Area = z.object({ area: cleanText(80).pipe(z.string().min(2)) });
+const ReadBody = z.object({ ids: z.array(z.number().int().positive()).max(100).optional() });
 
 export async function meRoutes(app: FastifyInstance) {
   const { deps } = app;
@@ -41,6 +42,31 @@ export async function meRoutes(app: FastifyInstance) {
       await audit(tx, { actorId: me.id, action: "user.delete", entityType: "user", entityId: me.id });
     });
     clearSessionCookie(reply);
+    return reply.status(204).send();
+  });
+
+  /* the inbox for this tab: the user site sees diner (and, for staff, admin) notifications; the owner tab sees owner ones */
+  const audiencesOf = (me: { mode: string; role: string }) => (me.mode === "owner" ? (["owner"] as const) : me.role === "admin" ? (["user", "admin"] as const) : (["user"] as const));
+
+  app.get("/api/me/notifications", async (req) => {
+    const me = requireUser(req);
+    const mine = and(eq(notifications.userId, me.id), inArray(notifications.audience, [...audiencesOf(me)]));
+    const rows = await db.select().from(notifications).where(mine).orderBy(desc(notifications.id)).limit(30);
+    const [unread] = await db.select({ n: count() }).from(notifications).where(and(mine, isNull(notifications.readAt)));
+    return {
+      unread: unread?.n ?? 0,
+      items: rows.map((n) => ({ id: n.id, type: n.type, title: n.title, body: n.body, link: n.link, audience: n.audience, read: !!n.readAt, createdAt: n.createdAt.toISOString() })),
+    };
+  });
+
+  /* mark some (or all) as read */
+  app.post("/api/me/notifications/read", async (req, reply) => {
+    const me = requireUser(req);
+    const { ids } = parse(ReadBody, req.body ?? {});
+    await db
+      .update(notifications)
+      .set({ readAt: deps.now() })
+      .where(and(eq(notifications.userId, me.id), inArray(notifications.audience, [...audiencesOf(me)]), isNull(notifications.readAt), ...(ids ? [inArray(notifications.id, ids)] : [])));
     return reply.status(204).send();
   });
 

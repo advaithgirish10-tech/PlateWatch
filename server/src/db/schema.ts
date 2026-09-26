@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   bigserial,
   boolean,
   check,
@@ -34,7 +35,7 @@ export const evidenceSource = pgEnum("evidence_source", ["checkup", "spot"]);
 export const reportStatus = pgEnum("report_status", ["pending", "accepted", "rejected"]);
 export const reportChannel = pgEnum("report_channel", ["web", "whatsapp"]);
 export const reportEvidenceKind = pgEnum("report_evidence_kind", ["photo", "video", "bill", "note"]);
-export const uploadPurpose = pgEnum("upload_purpose", ["evidence", "report", "response"]);
+export const uploadPurpose = pgEnum("upload_purpose", ["evidence", "report", "response", "claim"]);
 /* where a restaurant record came from */
 export const restaurantSource = pgEnum("restaurant_source", ["staff", "osm", "sample"]);
 /* the licence as FSSAI's FoSCoS search showed it to a staff member; null = not checked yet */
@@ -282,6 +283,8 @@ export const evidence = pgTable(
     reviewNote: text("review_note"),
     flagged: boolean("flagged").notNull().default(false),
     containsPeople: boolean("contains_people").notNull().default(false),
+    /* faces found and pixelated when the photo was uploaded */
+    facesBlurred: smallint("faces_blurred").notNull().default(0),
     submittedBy: uuid("submitted_by").references(() => users.id, { onDelete: "set null" }),
     reviewedBy: uuid("reviewed_by").references(() => users.id, { onDelete: "set null" }),
     reviewedAt: ts("reviewed_at"),
@@ -359,6 +362,7 @@ export const reportEvidence = pgTable("report_evidence", {
   kind: reportEvidenceKind("kind").notNull(),
   storageKey: text("storage_key").notNull(),
   originalName: text("original_name").notNull(),
+  facesBlurred: smallint("faces_blurred").notNull().default(0),
   createdAt: createdAt(),
 });
 
@@ -374,6 +378,7 @@ export const restaurantResponses = pgTable("restaurant_responses", {
   storageKey: text("storage_key"),
   originalName: text("original_name"),
   proofKind: proofKind("proof_kind"),
+  facesBlurred: smallint("faces_blurred").notNull().default(0),
   status: resolutionStatus("status").notNull().default("pending"),
   reviewNote: text("review_note"),
   reviewedBy: uuid("reviewed_by").references(() => users.id, { onDelete: "set null" }),
@@ -381,6 +386,89 @@ export const restaurantResponses = pgTable("restaurant_responses", {
   respondedBy: uuid("responded_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: createdAt(),
 });
+
+/* ---------- restaurant claims, approved by staff ---------- */
+
+export const claimStatus = pgEnum("claim_status", ["pending", "approved", "rejected"]);
+
+export const claimRequests = pgTable(
+  "claim_requests",
+  {
+    id: serial("id").primaryKey(),
+    restaurantId: integer("restaurant_id")
+      .notNull()
+      .references(() => restaurants.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    licenceNumber: text("licence_number").notNull(),
+    /* the FSSAI licence or registration certificate, a PDF or photo; staff compare it with the licence number */
+    storageKey: text("storage_key").notNull(),
+    originalName: text("original_name").notNull(),
+    contentType: text("content_type").notNull(),
+    status: claimStatus("status").notNull().default("pending"),
+    reviewNote: text("review_note"),
+    reviewedBy: uuid("reviewed_by").references(() => users.id, { onDelete: "set null" }),
+    reviewedAt: ts("reviewed_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("claim_requests_status_idx").on(t.status, t.createdAt), index("claim_requests_user_idx").on(t.userId)],
+);
+
+/* ---------- file fingerprints: catch a photo or PDF that was used before ---------- */
+
+export const fingerprintSource = pgEnum("fingerprint_source", ["evidence", "report", "proof", "claim"]);
+
+export const fileFingerprints = pgTable(
+  "file_fingerprints",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    source: fingerprintSource("source").notNull(),
+    /* the evidence, report evidence, report (proof) or claim this file belongs to */
+    sourceId: text("source_id").notNull(),
+    restaurantId: integer("restaurant_id"),
+    userId: uuid("user_id"),
+    /* photos: a 64-bit difference hash that survives re-encoding and small changes; PDFs: the exact SHA-256 */
+    dhash: bigint("dhash", { mode: "bigint" }),
+    sha256: text("sha256").notNull(),
+    storageKey: text("storage_key").notNull(),
+    /* the closest earlier file, when this one looks like a reuse */
+    matchOf: bigint("match_of", { mode: "number" }),
+    matchDistance: smallint("match_distance"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("file_fingerprints_sha_idx").on(t.sha256), index("file_fingerprints_source_idx").on(t.source, t.sourceId)],
+);
+
+/* ---------- notifications: an inbox on the site, and WhatsApp when it's set up ---------- */
+
+export const notificationAudience = pgEnum("notification_audience", ["user", "owner", "admin"]);
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /* which tab shows it: the user site, the owner dashboard, or admin */
+    audience: notificationAudience("audience").notNull(),
+    type: text("type").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    /* where it opens on the site, e.g. #profile-3 */
+    link: text("link"),
+    /* one notification per event and person, however often the event is processed */
+    dedupeKey: text("dedupe_key").notNull().unique(),
+    /* also send it outside the site (WhatsApp) */
+    external: boolean("external").notNull().default(false),
+    sentAt: ts("sent_at"),
+    sendAttempts: smallint("send_attempts").notNull().default(0),
+    readAt: ts("read_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("notifications_user_idx").on(t.userId, t.audience, t.createdAt), index("notifications_outbox_idx").on(t.external, t.sentAt)],
+);
 
 /* ---------- audit ---------- */
 

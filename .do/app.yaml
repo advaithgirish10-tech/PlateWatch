@@ -53,6 +53,12 @@ services:
         type: SECRET
       - key: MSG91_OTP_TEMPLATE_ID
         scope: RUN_TIME
+      - key: NOTIFY_CHANNEL
+        scope: RUN_TIME
+        value: whatsapp
+      - key: WHATSAPP_NOTIFY_TEMPLATE
+        scope: RUN_TIME
+        value: platewatch_update
       - key: STORAGE
         scope: RUN_TIME
         value: s3

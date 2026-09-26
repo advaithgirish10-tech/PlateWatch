@@ -1,17 +1,20 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, count, eq, gte, isNull } from "drizzle-orm";
 import { uploads } from "../../db/schema.js";
 import { startOfDayIST } from "../../lib/dates.js";
-import { badRequest, conflict, tooMany } from "../../lib/errors.js";
+import { HttpError, badRequest, conflict, tooMany } from "../../lib/errors.js";
+import { blurFaces, dhash } from "../../storage/faces.js";
 import { EXT, PDF, isImage, maxBytesFor, sanitizeImage, sniff, type AllowedType } from "../../storage/files.js";
 import type { Deps } from "../../types.js";
 
-export type Purpose = "evidence" | "report" | "response";
+export type Purpose = "evidence" | "report" | "response" | "claim";
 
 const ALLOWED: Record<Purpose, AllowedType[]> = {
   evidence: ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime", PDF],
   report: ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime", PDF],
   response: ["image/jpeg", "image/png", "image/webp", PDF],
+  /* the FSSAI licence certificate: a PDF or a photo of it */
+  claim: ["image/jpeg", "image/png", "image/webp", PDF],
 };
 const PUT_TTL_SECONDS = 300;
 const CLAIM_WITHIN_MS = 24 * 3_600_000;
@@ -50,7 +53,8 @@ export async function createUpload(deps: Deps, userId: string, isAdmin: boolean,
 /*
  * Attach an uploaded file to something. Checks, in order: the upload is the caller's, for this purpose and unused;
  * the file exists at the declared size; its first bytes match the declared type. Photos are then re-encoded to drop
- * EXIF metadata (including GPS location) before anyone else can see them.
+ * EXIF metadata (including GPS location), and any faces are pixelated, before anyone else can see them. The result
+ * carries a fingerprint so a reused photo or PDF can be recognised (see fingerprints.ts).
  */
 export async function consumeUpload(deps: Deps, input: { uploadId: string; userId: string; purpose: Purpose }) {
   const { db, storage } = deps;
@@ -72,17 +76,33 @@ export async function consumeUpload(deps: Deps, input: { uploadId: string; userI
     throw badRequest("That file isn't a valid photo, video or PDF.", { code: "UPLOAD_BAD_TYPE" });
   }
   let size = u.sizeBytes;
+  let facesBlurred = 0;
+  let hash: bigint | null = null;
+  let stored = body;
   if (isImage(real)) {
     let clean: Buffer;
     try {
       clean = await sanitizeImage(body, real);
+      hash = await dhash(clean);
     } catch {
       await storage.delete(u.storageKey);
       throw badRequest("That photo couldn't be read. Try another.", { code: "UPLOAD_BAD_IMAGE" });
     }
+    /* no face goes on the server unblurred: if the check can't run, the photo isn't taken, and can be sent again */
+    let faces;
+    try {
+      faces = await deps.faces.detect(clean);
+    } catch {
+      await db.update(uploads).set({ consumedAt: null }).where(eq(uploads.id, u.id));
+      throw new HttpError(503, "FACE_CHECK_FAILED", "We couldn't check this photo for faces just now. Try again in a minute.");
+    }
+    if (faces.length) clean = await blurFaces(clean, faces, real);
+    facesBlurred = faces.length;
     await storage.put(u.storageKey, clean, real);
     size = clean.length;
+    stored = clean;
   }
   const kind = isImage(real) ? ("photo" as const) : real.startsWith("video/") ? ("video" as const) : ("document" as const);
-  return { storageKey: u.storageKey, contentType: real, sizeBytes: size, originalName: u.originalName, kind };
+  const fingerprint = { dhash: hash, sha256: createHash("sha256").update(stored).digest("hex") };
+  return { storageKey: u.storageKey, contentType: real, sizeBytes: size, originalName: u.originalName, kind, facesBlurred, fingerprint };
 }

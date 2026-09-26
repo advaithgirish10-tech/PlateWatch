@@ -18,7 +18,7 @@ beforeAll(async () => {
 });
 afterAll(async () => t.close());
 
-const claim = (cookie: string, restaurantId: number, licenceNumber: string) => t.call("POST", "/api/owner/claims", { cookie, body: { restaurantId, licenceNumber } });
+const claim = (cookie: string, restaurantId: number, licenceNumber: string) => t.requestClaim(cookie, restaurantId, licenceNumber);
 
 /* pest control (p…) and documentation (d…) take a PDF; everything else a photo */
 async function submitEvidence(cookie: string, rid: number, requirementId: string) {
@@ -35,9 +35,11 @@ describe("claiming", () => {
     expect(r.statusCode).toBe(400);
   });
 
-  it("claims an unclaimed restaurant", async () => {
+  it("claims an unclaimed restaurant once staff approve it", async () => {
     const r = await claim(owner, HARBOUR.id, HARBOUR.lic);
-    expect(r.statusCode).toBe(201);
+    expect(r.statusCode).toBe(202);
+    expect((await t.call("GET", "/api/me", { cookie: owner })).json().user.ownedRestaurantIds).toEqual([]);
+    await t.call("POST", `/api/admin/claims/${r.json().claimId}/decision`, { cookie: admin, body: { decision: "approve" } });
     expect((await t.call("GET", "/api/me", { cookie: owner })).json().user.ownedRestaurantIds).toEqual([HARBOUR.id]);
   });
 

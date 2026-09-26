@@ -259,3 +259,9 @@ html.ad-lock{overflow:hidden}
 /* tabs for modules that are not built yet */
 .ad-count.ad-soon{background:transparent;border:1px solid var(--rule);color:var(--grey);font-family:var(--mono);text-transform:uppercase;letter-spacing:.04em}
 .ad-btn-sm{padding:3px 10px;font-size:12.5px;margin-left:8px}
+/* possible reused file, with the earlier one to compare */
+.ad-reuse{display:flex;gap:10px;align-items:flex-start;margin-top:12px;padding:10px 12px;border:1px solid var(--ad-amber-line);background:var(--ad-amber-bg);border-radius:10px;font-size:13.5px;color:var(--ad-amber)}
+.ad-reuse b{display:block;color:#5C3D00;font-weight:600}
+.ad-reuse span{display:block;margin-top:2px}
+.ad-reuse a{display:inline-block;margin-top:4px;color:#5C3D00}
+.ad-cert img{max-height:220px;object-fit:contain;background:#fff}
