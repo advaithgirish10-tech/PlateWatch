@@ -619,6 +619,11 @@ function overdueHTML(fr){
   if(!late.length)return "";
   return `<div class="crit overdue"><b class="m">!</b><div><b>Evidence overdue</b><br>${late.map(x=>`${esc(x.name)}: new ${x.key==="pest"||x.key==="docs"?"PDF":"photos"} due ${every(x.everyDays)}, was due by ${fmt(x.dueOn)}`).map(t=>`<span>${t}</span>`).join("<br>")}<br><span class="muted">Late items don't count, so the score above is lower until the restaurant uploads new evidence.</span></div></div>`;
 }
+/* a photo whose file is gone (deleted after 4 months, or lost in development): say so instead of a broken image */
+document.addEventListener("error",e=>{
+  const i=e.target;if(i.tagName!=="IMG"||!i.closest(".rep-photos"))return;
+  const g=document.createElement("span");g.className="rep-gone";g.textContent="Photo unavailable";(i.closest("a")||i).replaceWith(g);
+},true);
 /* "3 days ago", "1 week ago" */
 function since(iso){const d=Math.floor((Date.now()-Date.parse(iso))/864e5);return d<=0?"today":d===1?"yesterday":d<7?d+" days ago":d<14?"1 week ago":Math.floor(d/7)+" weeks ago"}
 const photosHTML=(list,alt)=>list.length?`<div class="rep-photos">${list.map(u=>`<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="${alt}" loading="lazy"></a>`).join("")}</div>`:"";
@@ -723,13 +728,6 @@ async function renderDetail(id){
     </div>
     <div class="side" style="padding-top:34px">
       <div><h3>Sources</h3>${sources.length?`<div class="srcl">${sources.map(h=>`<span><a href="${esc(h.sourceUrl)}" target="_blank" rel="noopener">${esc(h.authority)} · ${TYPES[h.type][0]}</a><em>OFFICIAL · ${fmt(h.actionOn)}</em></span>`).join("")}</div>`:`<p class="muted">No official source linked yet.</p>`}<p class="muted" style="margin-top:10px">Each official entry links to the release or order it came from.</p></div>
-      <div><h3>Something wrong here?</h3><p class="muted" style="margin:0 0 14px">Owners and readers can request a correction. We reply within 48 hours.</p>
-        <form class="form" id="cform">
-          <label for="c-role">You are</label><select class="input" id="c-role"><option value="owner">The business owner</option><option value="customer">A customer</option><option value="other">Other</option></select>
-          <label for="c-msg">What needs fixing</label><textarea class="input" id="c-msg" rows="3" required minlength="5" maxlength="1000" placeholder="e.g. Licence restored on 20 Sep, re-inspection order attached"></textarea>
-          <div style="margin-top:8px"><button class="pillbtn" type="submit">Send correction request</button></div>
-          <div id="cmsg" class="note" hidden></div>
-        </form></div>
     </div>
   </div>`;
   bindBack();
@@ -742,12 +740,6 @@ async function renderDetail(id){
     renderDetail(id);
   };
   const ct=document.getElementById("claimThis");if(ct)ct.onclick=()=>{go("biz",id)};
-  /* corrections go to staff with a reference number */
-  document.getElementById("cform").onsubmit=async e=>{e.preventDefault();const m=document.getElementById("cmsg"),btn=e.target.querySelector("button[type=submit]");btn.disabled=true;
-    try{const res=await api("POST",`/restaurants/${id}/corrections`,{role:document.getElementById("c-role").value,message:document.getElementById("c-msg").value.trim()});
-      m.textContent=`Received. Reference ${res.reference}. We'll review it within 48 hours.`;m.hidden=false;e.target.reset()}
-    catch(err){m.textContent=err.message;m.hidden=false}
-    btn.disabled=false};
 }
 
 /* ---------- BUSINESS: find + claim ---------- */

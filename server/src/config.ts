@@ -27,7 +27,9 @@ const schema = z
     WHATSAPP_API_VERSION: z.string().default("v23.0"),
     MSG91_AUTH_KEY: z.string().default(""),
     MSG91_OTP_TEMPLATE_ID: z.string().default(""),
-    STORAGE: z.enum(["memory", "s3"]).default("memory"),
+    /* local: files in a folder on this computer (development); memory: lost on restart (tests); s3: R2 or S3 */
+    STORAGE: z.enum(["local", "memory", "s3"]).default("local"),
+    LOCAL_STORAGE_DIR: z.string().default(".data/uploads"),
     S3_ENDPOINT: z.string().default(""),
     S3_REGION: z.string().default("auto"),
     S3_BUCKET: z.string().default("platewatch"),
@@ -47,7 +49,7 @@ const schema = z
     const bad = (path: string, message: string) => ctx.addIssue({ code: "custom", path: [path], message });
     if (c.OTP_DEV_ECHO) bad("OTP_DEV_ECHO", "must be false in production");
     if (c.OTP_CHANNEL === "console") bad("OTP_CHANNEL", "console can't send real codes");
-    if (c.STORAGE === "memory") bad("STORAGE", "memory storage loses files on restart");
+    if (c.STORAGE !== "s3") bad("STORAGE", "use s3 in production: memory loses files on restart, and a server's own disk isn't kept between deploys");
     if (c.OTP_PEPPER.startsWith("dev-")) bad("OTP_PEPPER", "set a real secret");
   });
 

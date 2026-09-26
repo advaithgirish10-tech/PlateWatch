@@ -214,3 +214,4 @@ html.rmk-lock{overflow:hidden}
 .resolve-file img,.resolve-file .th{width:44px;height:44px;border-radius:8px;object-fit:cover;background:var(--soft);display:grid;place-items:center;font-family:var(--mono);font-size:10px;color:var(--grey)}
 .resolve-btns{display:flex;flex-wrap:wrap;gap:8px}
 .resolve-acts{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:14px}
+.rep-gone{display:grid;place-items:center;width:120px;height:120px;border-radius:10px;border:1px dashed var(--rule);background:var(--soft);color:var(--grey);font-size:12px;text-align:center;padding:8px}

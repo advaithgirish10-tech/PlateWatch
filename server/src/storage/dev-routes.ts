@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { forbidden, notFound } from "../lib/errors.js";
-import type { MemoryStorage } from "./storage.js";
+import type { DevStorage } from "./storage.js";
 
-/* development only: stands in for the S3 endpoint when STORAGE=memory, honouring the same signed-URL rules */
+/* development only: stands in for the S3 endpoint when STORAGE=local or memory, honouring the same signed-URL rules */
 export async function devStorageRoutes(app: FastifyInstance) {
-  const storage = app.deps.storage as MemoryStorage;
+  const storage = app.deps.storage as DevStorage;
   app.addContentTypeParser("*", { parseAs: "buffer", bodyLimit: 60 * 1024 * 1024 }, (_req, body, done) => done(null, body));
 
   app.put<{ Params: { key: string }; Querystring: Record<string, string> }>("/api/dev/storage/:key", async (req, reply) => {
@@ -18,7 +18,7 @@ export async function devStorageRoutes(app: FastifyInstance) {
   app.get<{ Params: { key: string }; Querystring: Record<string, string> }>("/api/dev/storage/:key", async (req, reply) => {
     const { exp = "", sig = "" } = req.query;
     if (!storage.verify("GET", req.params.key, exp, sig)) throw forbidden("Signature expired.");
-    const f = storage.files.get(req.params.key);
+    const f = await storage.read(req.params.key);
     if (!f) throw notFound();
     return reply.type(f.contentType).send(f.body);
   });

@@ -4,3 +4,5 @@ dist
 *.log
 .env
 README.md
+server/.data/
+server/.env.example

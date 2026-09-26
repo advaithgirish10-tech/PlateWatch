@@ -69,7 +69,7 @@ export async function buildApp(deps: Deps, { rateLimit: limit = true, ...opts }:
   await app.register(ownerRoutes);
   await app.register(reportRoutes);
   await app.register(adminRoutes);
-  if (deps.config.STORAGE === "memory" && deps.config.NODE_ENV !== "production") await app.register(devStorageRoutes);
+  if (deps.config.STORAGE !== "s3" && deps.config.NODE_ENV !== "production") await app.register(devStorageRoutes);
 
   return app;
 }

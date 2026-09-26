@@ -3,11 +3,11 @@ import { scheduleRetention } from "./jobs/retention.js";
 import { loadConfig } from "./config.js";
 import { createDb } from "./db/client.js";
 import { otpSenderFromConfig, type OtpSender } from "./messaging/otp-sender.js";
-import { memoryStorage, s3Storage } from "./storage/storage.js";
+import { storageFromConfig } from "./storage/storage.js";
 
 const config = loadConfig();
 const { db, pool } = createDb(config.DATABASE_URL);
-const storage = config.STORAGE === "s3" ? s3Storage(config) : memoryStorage();
+const storage = storageFromConfig(config);
 /* the sender needs the app's logger, so it's attached once the app exists */
 const otp: OtpSender = { send: (phone, code) => real.send(phone, code) };
 /* fail at startup, with the fix in the message, rather than on the first request */
