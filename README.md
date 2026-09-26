@@ -2,7 +2,7 @@
 
 **Know before you eat.** A prototype of a food-safety intelligence platform: search a restaurant and see its official regulatory record, restaurant-submitted evidence, platform verification and moderated community reports, each labelled separately.
 
-> **Prototype.** Every business, licence number, report and statistic is fictional sample data held in memory. It resets on reload. OTP codes are simulated and shown on screen.
+> **Prototype.** Every business, licence number and statistic is fictional sample data, loaded into the database by `npm run db:seed` in `server/`. The whole site reads the real API: restaurants, the map, search, profiles, homepage numbers, login, accounts, claims, the restaurant dashboard, reports and admin. Only the homepage illustration cards and the How-it-works demo use fixed sample records, and spot checks and escalations are not built on the server yet.
 
 ## Run it
 
@@ -14,6 +14,14 @@ npm run dev      # opens http://localhost:5173
 npm run build    # production build in dist/
 npm run preview  # serve the production build
 ```
+
+Logging in, following places and claiming a restaurant need the API running too (`server/README.md` has the one-time setup):
+
+```bash
+cd server && npm run db:up && npm run dev   # API on http://localhost:3000; the site proxies /api to it
+```
+
+In development the API has no SMS or WhatsApp account, so each login code is printed in the API's terminal (`OTP for +91…: 123456`). Real delivery starts once WhatsApp and MSG91 keys are set. Without the API, browsing still works and login says it can't reach PlateWatch.
 
 ## What's inside
 
@@ -27,7 +35,7 @@ npm run preview  # serve the production build
 | About | `src/markup/about.html` |
 | Phone + OTP login, account | `src/markup/login.html`, `account.html` |
 | Restaurant claim, dashboard, QR code | `src/markup/restaurants.html`, `dashboard.html` |
-| Admin review queue | `src/markup/admin.html` |
+| Admin review queue (staff only: signed-out visitors are sent to login, other accounts to the homepage; links show only for admins) | `src/markup/admin.html` |
 | Spot checks, kitchen gallery | `src/app/spotcheck.js`, `src/markup/spotcheck.html` |
 | Nav, disclaimer, footer | `src/markup/shell.html`, `footer.html` |
 | All behaviour (routing, data, scoring, demo) | `src/app/platewatch.js` |
@@ -44,10 +52,11 @@ Notes:
 - External, loaded in `index.html`: Google Fonts (Geist, Geist Mono, Outfit, Caveat) and `qrcodejs` 1.0.0 from cdnjs for the restaurant QR poster. Offline, fonts fall back and the QR preview shows "QR preview unavailable".
 
 ### Key logic in `platewatch.js`
-- `D`: sample restaurants and their FDA action history.
+- `api.js`: every call to the backend, with plain-sentence errors. `PLACES` / `remember()` cache the restaurants the site has already fetched.
+- `SAMPLE`, `PROF[DEMO]`, `SAMPLE_REPORT`: fixed fictional records for the homepage illustrations and How it works only.
 - `REQS` / `CATS`: the 27-requirement food-safety checkup, weights, critical flags and evidence expiry.
 - `scoreOf(rid)`: weighted requirements met ÷ weighted applicable × 100. Only "yes" answers backed by current, non-rejected evidence count; critical failures are flagged separately.
-- `PROF`, `REPORTS`: restaurant profiles, evidence and community reports.
+- `PROF[rid]`: the signed-in owner's checkup, loaded from the API for the dashboard. `REPORTS`: chat reports sent in this visit.
 - `go(page, arg)`: page switching.
 
 ## Flow changes
@@ -75,8 +84,8 @@ Entry points: the Report page, every profile, search no-results ("Report a probl
 
 **Bot steps**
 1. Greeting.
-2. Verify the number (first time only) with a demo code. A number verified in the chat signs you in on the site, and a site login skips this step. Sample number 98765 43210 is "verified in June" so its reports count in full.
-3. Which place (skipped when opened from a profile): share location (3 nearby sample outlets), send a bill photo (matched to a sample outlet), or type a name (fuzzy match, top 3, or Not listed → name + area).
+2. Verify the number (first time only) with a real code from the API. A number verified in the chat signs you in on the site, and a site login skips this step.
+3. Which place (skipped when opened from a profile): share location (the three closest listed places, from the API), send a bill photo (kept as evidence; the name is then typed), or type a name (the API's typo-tolerant search, top 3, or Not listed → name + area).
 4. What did you see: Pests · Stale or spoiled food · Hygiene · Fell ill · Other.
 5. Evidence: photo, video or bill, or Skip. "Fell ill" also asks for a doctor's note from the last 72 hours.
 6. One optional line (500 characters max).
@@ -98,7 +107,7 @@ Moderators (Admin → Community reports) can Accept, Reject with reason, Ask the
 
 Admin → Escalations lists each escalation (outlet, licence, report IDs, rule, authority, date) with a preview of the email packet (reporter identities withheld; "Demo — not emailed."). Reporters are told when their report is sent, and again when the tracker shows a new official action on that outlet. A demo button records a sample action so this can be seen.
 
-Seeds: Coastal Tiffin Centre is one accepted report short of the standard rule; Spice Route Kitchen is one report short of the fast lane, with mostly new numbers.
+Escalations run only in the browser for now; the server module is not built, and the admin page marks it "Soon".
 
 ## Spot checks and gallery
 
@@ -119,7 +128,7 @@ Logic in `src/app/spotcheck.js`, lightbox markup in `src/markup/spotcheck.html`,
 
 **Faces.** Photos have a `people` flag. In the prototype, flagged photos get a CSS blur over a fixed demo region and a "Faces blurred" note. **Production must run real face detection and blurring on the server before any photo is published.** The CSS blur here is only a visual placeholder and hides nothing in the actual image file.
 
-Seeds: Green Leaf Dhaba has 8 approved sample photos (generated SVG placeholders labelled "Sample photo") across 4 areas, 2 of them from a spot check 10 days ago, plus a missed spot check 3 weeks ago. Its storage evidence is 25 days old, so "Do these next" shows items expiring in 5 days.
+Spot checks are not built on the server yet: none are sent, and the owner dashboard says they are coming. The public kitchen gallery shows reviewer-approved photos from the API only when `PUBLIC_GALLERY` is on in `server/.env`.
 
 ## Map and badges
 
@@ -143,15 +152,19 @@ Dots appear in search suggestions, map cards and pins, and the profile header. B
 - **Accessibility:** a visually hidden "Skip map, go to results" link comes before the map.
 - **Pins and clusters:** pins are status-coloured dots with a white border, plus a small black diamond for PlateWatch verified. Clusters show a count, coloured by the most serious status inside (red > amber > green > grey).
 - **Near me** uses browser geolocation. If it's denied or unavailable it shows "Location unavailable — search an area instead." and nothing else breaks.
-- The initial view is Mumbai (19.0760, 72.8777) at zoom 11, labelled "Sample data".
+- The initial view is Mumbai (19.0760, 72.8777) at zoom 11. Pins come from the API for the area on screen (`GET /api/restaurants?bbox=…`) and reload as the map moves; pins that stay in view keep their open popup.
 
 Tiles come from the public OpenStreetMap tile server, with attribution shown in the map corner. That's fine for a prototype, but production traffic must use a tile provider or self-hosted tiles, per the OpenStreetMap tile usage policy.
 
-Sample data: every original sample restaurant has plausible coordinates except Temple Road Prasad Stall (Shirdi), left without one to show "Location pending". There are also 20 extra fictional Mumbai places with no official action: 15 not claimed, 3 claimed and self-reported, 2 PlateWatch verified. Every combination is covered: red + Not claimed yet (Harbour Lane Café), red + Claimed (Deccan Dosa House), amber + Claimed (Bandra Bao Co.), green + PlateWatch verified (Green Leaf Dhaba), grey + Not claimed yet, and grey + PlateWatch verified.
+Sample data (in the development database): every sample restaurant has plausible coordinates except Temple Road Prasad Stall (Shirdi), left without one to show "Location pending". There are also 20 extra fictional Mumbai places with no official action. A production database starts without them (`npm run db:seed -- --catalog-only`).
+
+## Backend
+
+The API lives in `server/` (Node.js, TypeScript, PostgreSQL with PostGIS). Setup, endpoints, rules and deployment are in `server/README.md`; the choice of stack is explained in `new-backup.md`. The whole site reads it (restaurants, map, search, profiles, homepage numbers, login, account, claims, dashboard, reports, admin); `npm run dev` proxies `/api` to it on port 3000.
 
 ## Next steps toward production
-1. Replace in-memory data with a backend (restaurants, regulatory_records, requirements, assessment_responses, evidence, verification_requests, community_reports, restaurant_responses, notifications, audit_log).
-2. Real OTP via an SMS provider (DLT registration required in India).
+1. Enter real restaurants and FDA actions through Admin → Official record (one area first), then an import script for FDA Maharashtra notices with staff review, after legal review.
+2. Real OTP delivery: an approved WhatsApp authentication template and MSG91 SMS (DLT registration required in India). The code is written; it needs the accounts and keys.
 3. File storage for evidence uploads, plus a vision model for the AI-assisted observations (currently canned).
-4. Staff authentication for the admin panel.
+4. Stronger staff sign-in for the admin page (password + authenticator app). Today it's an OTP account with the admin role, granted with `npm run admin:grant` in `server/`.
 5. Port pages to React components incrementally, one page at a time, keeping this build as the visual reference.

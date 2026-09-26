@@ -1,0 +1,115 @@
+# DigitalOcean App Platform, Bangalore. First deploy: `doctl apps create --spec .do/app.yaml`;
+# after that: `doctl apps update <app-id> --spec .do/app.yaml`. Set every SECRET value in the dashboard, never here.
+# Before the first deploy, create the managed PostgreSQL cluster "platewatch-db" in BLR1 (see server/README.md).
+name: platewatch
+region: blr
+
+databases:
+  - name: db
+    engine: PG
+    version: "17"
+    production: true
+    cluster_name: platewatch-db
+    db_name: platewatch
+    db_user: platewatch
+
+services:
+  - name: api
+    github:
+      repo: advaithgirish10-tech/PlateWatch
+      branch: main
+      deploy_on_push: true
+    source_dir: server
+    dockerfile_path: server/Dockerfile
+    http_port: 3000
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    health_check:
+      http_path: /api/health
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+      # the managed database's certificate authority, so the TLS connection can be verified
+      - key: DATABASE_CA_CERT
+        scope: RUN_TIME
+        value: ${db.CA_CERT}
+      - key: ALLOWED_ORIGINS
+        scope: RUN_TIME
+        value: ${APP_URL}
+      - key: OTP_CHANNEL
+        scope: RUN_TIME
+        value: whatsapp+sms
+      - key: OTP_PEPPER
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        scope: RUN_TIME
+      - key: MSG91_AUTH_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: MSG91_OTP_TEMPLATE_ID
+        scope: RUN_TIME
+      - key: STORAGE
+        scope: RUN_TIME
+        value: s3
+      # Cloudflare R2: https://<account-id>.r2.cloudflarestorage.com
+      - key: S3_ENDPOINT
+        scope: RUN_TIME
+      - key: S3_BUCKET
+        scope: RUN_TIME
+        value: platewatch
+      - key: S3_ACCESS_KEY_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: S3_SECRET_ACCESS_KEY
+        scope: RUN_TIME
+        type: SECRET
+
+jobs:
+  # schema migrations run once per deploy, before the new version takes traffic
+  - name: migrate
+    kind: PRE_DEPLOY
+    github:
+      repo: advaithgirish10-tech/PlateWatch
+      branch: main
+    source_dir: server
+    dockerfile_path: server/Dockerfile
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    run_command: node dist/src/db/migrate.js
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+      # the managed database's certificate authority, so the TLS connection can be verified
+      - key: DATABASE_CA_CERT
+        scope: RUN_TIME
+        value: ${db.CA_CERT}
+
+static_sites:
+  - name: web
+    github:
+      repo: advaithgirish10-tech/PlateWatch
+      branch: main
+      deploy_on_push: true
+    build_command: npm run build
+    output_dir: dist
+    catchall_document: index.html
+
+# one domain for both, so the browser needs no CORS for the API
+ingress:
+  rules:
+    - match:
+        path:
+          prefix: /api
+      component:
+        name: api
+        preserve_path_prefix: true
+    - match:
+        path:
+          prefix: /
+      component:
+        name: web

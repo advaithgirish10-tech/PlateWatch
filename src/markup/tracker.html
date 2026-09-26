@@ -4,7 +4,7 @@
     <div class="pagehead">
       <div class="eyebrow">The tracker</div>
       <h1 class="h-big" style="margin-top:12px">Every action, searchable.</h1>
-      <p class="lede">Sorted newest first. Tap any entry for its full history and sources.</p>
+      <p class="lede">Search a name, area or licence number, or explore the map. Tap any place for its full history and sources.</p>
     </div>
     <div class="filters">
       <div class="sugwrap sugwrap-field" id="qWrap"><input class="field search" id="q" type="search" placeholder="Search name, area or licence no." aria-label="Search name, area or licence number" autocomplete="off"><div class="sug" id="qSug" hidden></div></div>
@@ -14,14 +14,16 @@
     <div class="fgroup"><span class="fgroup-l" id="segL">Official status</span><div class="seg" id="seg" role="group" aria-labelledby="segL"></div></div>
     <div class="fgroup"><span class="fgroup-l" id="segVerL">PlateWatch verification</span><div class="seg" id="segVer" role="group" aria-labelledby="segVerL"></div></div>
     <div id="dotLegend"></div>
-    <p class="coverage">Coverage: Maharashtra — official actions tracked. Other states — licence status only.</p>
-    <p class="coverage tmap-cov">Map shows restaurants with an official record or a claimed profile. More are added as data is verified. Grey means no official action on record, not 'safe'.</p>
+    <details class="tkey">
+      <summary>About this data</summary>
+      <p class="coverage">Coverage: Maharashtra — official actions tracked. Other states — licence status only.</p>
+      <p class="coverage tmap-cov">Map shows restaurants with an official record or a claimed profile. More are added as data is verified. Grey means no official action on record, not 'safe'.</p>
+    </details>
 
     <a class="skip-link" href="#tracker" id="skipMap">Skip map, go to results</a>
     <div class="tmap" id="tmap">
       <div class="tmap-mapwrap">
         <div id="map" class="tmap-map" role="region" aria-label="Map of restaurants by official status"></div>
-        <span class="tmap-sample">Sample data</span>
         <button type="button" class="pillbtn out sm tmap-near" id="nearMe">Near me</button>
       </div>
       <section class="tmap-side" id="mapSheet" data-state="peek" aria-labelledby="resH">
